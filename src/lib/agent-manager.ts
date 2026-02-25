@@ -15,6 +15,7 @@ import { EventEmitter } from 'events';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
+import { normalize } from 'path';
 import { query, type Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeOutput } from '../types';
 import { adaptSDKMessage, isValidSDKMessage, type BackgroundShellInfo, type SDKResultMessage } from './sdk-event-adapter';
@@ -413,6 +414,30 @@ Your task is INCOMPLETE until:\n1. File exists with valid content\n2. You have R
         log.debug({ path: `${projectPath}/.mcp.json` }, 'No MCP config found');
       }
 
+      // Resolve claude executable path for SDK (Windows only)
+      // On Windows, the SDK defaults to running its bundled cli.js via `bun cli.js`,
+      // which causes EPERM on C:\Windows\System32\ due to a Bun PATH-reading bug.
+      // Fix: pass the real claude.exe path directly so the SDK spawns it as a native binary.
+      // On other platforms (Linux/macOS), leave undefined so SDK uses its default.
+      const resolvedClaudePath = (() => {
+        if (process.platform !== 'win32') return undefined;
+        const envPath = process.env.CLAUDE_PATH;
+        if (envPath && existsSync(normalize(envPath))) {
+          return normalize(envPath);
+        }
+        // Fallback: search common Windows locations
+        const home = process.env.USERPROFILE || process.env.HOME || '';
+        const candidates = [
+          join(home, '.local', 'bin', 'claude.exe'),
+          join(home, 'AppData', 'Local', 'Programs', 'claude', 'claude.exe'),
+        ];
+        for (const c of candidates) {
+          if (existsSync(c)) return c;
+        }
+        return undefined;
+
+      })();
+
       // Configure SDK query options
       // resumeSessionAt: resume conversation at specific message UUID (for rewind)
       // Model priority: provided model > DEFAULT_MODEL ('opus')
@@ -525,10 +550,14 @@ Your task is INCOMPLETE until:\n1. File exists with valid content\n2. You have R
         ? `You are powered by the model named ${modelDisplayName}. The exact model ID is ${effectiveModel}.`
         : `You are powered by the model ${effectiveModel}.`;
 
+      log.info({ resolvedClaudePath }, 'Using claude executable path');
       const response = query({
         prompt,
         options: {
           ...queryOptions,
+          // Pass the real claude.exe path so the SDK doesn't fall back to its bundled cli.js
+          // Running `bun <sdk_cli.js>` on Windows causes EPERM errors on C:\Windows\System32\
+          ...(resolvedClaudePath ? { pathToClaudeCodeExecutable: resolvedClaudePath } : {}),
           systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: modelIdentity },
         },
       });
