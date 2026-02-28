@@ -92,6 +92,7 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
     activeQuestion,
     answerQuestion,
     cancelQuestion,
+    refetchQuestion,
   } = useAttemptStream({
     taskId: task.id,
     onComplete: handleTaskComplete,
@@ -220,7 +221,13 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
         currentFiles={isRunning ? currentAttemptFiles : undefined}
         isRunning={isRunning}
         activeQuestion={activeQuestion}
-        onOpenQuestion={() => setShowQuestionPrompt(true)}
+        onOpenQuestion={() => {
+          if (activeQuestion) {
+            setShowQuestionPrompt(true);
+          } else {
+            refetchQuestion();
+          }
+        }}
       />
     </div>
   );
@@ -229,7 +236,7 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
     <>
       <Separator />
       <div className="relative">
-        {showQuestionPrompt ? (
+        {showQuestionPrompt && activeQuestion ? (
           <div className="border-t bg-muted/30">
             {activeQuestion ? (
               <QuestionPrompt
