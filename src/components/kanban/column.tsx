@@ -62,6 +62,17 @@ export function Column({ status, title, tasks, attemptCounts = new Map(), onCrea
             <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
               {tasks.length}
             </span>
+            {isArchiveColumn && tasks.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                onClick={handleEmptyColumn}
+                title={t('deleteAllTasks', { count: tasks.length, status: title })}
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
             {isTodoColumn && onCreateTask && (
               <Button
                 variant="default"
