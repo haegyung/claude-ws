@@ -4,19 +4,17 @@ import { useState, FormEvent, useRef, useEffect, forwardRef, useImperativeHandle
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send, Loader2, Paperclip, Square, TrendingUp } from 'lucide-react';
+import { Send, Loader2, Square, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { CommandSelector } from './command-selector';
 import { FileDropZone } from './file-drop-zone';
-import { AttachmentBar } from './attachment-bar';
 import { FileMentionDropdown } from './file-mention-dropdown';
-import { FileIcon } from '@/components/sidebar/file-browser/file-icon';
 import { ChatModelSelector } from './chat-model-selector';
 import { useInteractiveCommandStore } from '@/stores/interactive-command-store';
-import { useAttachmentStore } from '@/stores/attachment-store';
-import { useContextMentionStore } from '@/stores/context-mention-store';
 import { cn } from '@/lib/utils';
-import { X } from 'lucide-react';
+import { usePromptMentions, MentionsBar } from '@/components/task/prompt-input-mentions';
+import { usePromptAttachments, AttachmentBarSection, PaperclipButton, HiddenFileInput } from '@/components/task/prompt-input-attachments';
+import { usePromptKeyboard } from '@/components/task/use-prompt-keyboard';
 
 export interface PromptInputRef {
   submit: () => void;
@@ -68,14 +66,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
   const [commandFilter, setCommandFilter] = useState('');
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
   const [userHasTyped, setUserHasTyped] = useState(false);
-  // File mention state (for @ dropdown)
-  const [showFileMention, setShowFileMention] = useState(false);
-  const [fileMentionQuery, setFileMentionQuery] = useState('');
-  const [mentionStartIndex, setMentionStartIndex] = useState(-1);
-
-  // Context mention store (for both @file and @file#lines from Cmd+L)
-  const { getMentions, addFileMention, removeMention, clearMentions, buildPromptWithMentions } = useContextMentionStore();
-  const mentions = taskId ? getMentions(taskId) : [];
   const [taskStats, setTaskStats] = useState<{
     totalTokens: number;
     totalCostUSD: number;
@@ -89,21 +79,7 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     contextPercentage: number;
   } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { openCommand } = useInteractiveCommandStore();
-
-  // Attachment store
-  const {
-    getPendingFiles,
-    addFiles,
-    removeFile,
-    clearFiles,
-    retryUpload,
-    getUploadedFileIds,
-    hasUploadingFiles,
-  } = useAttachmentStore();
-
-  const pendingFiles = taskId ? getPendingFiles(taskId) : [];
 
   // Wrapper to update prompt and notify parent
   const updatePrompt = (newPrompt: string) => {
@@ -111,96 +87,47 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     onChange?.(newPrompt);
   };
 
-  // Detect @ mention for file search
-  const checkForFileMention = useCallback((text: string, cursorPos: number) => {
-    // Look backwards from cursor to find @
-    let atIndex = -1;
-    for (let i = cursorPos - 1; i >= 0; i--) {
-      const char = text[i];
-      if (char === '@') {
-        atIndex = i;
-        break;
-      }
-      // Stop if we hit a space or newline before finding @
-      if (char === ' ' || char === '\n') {
-        break;
-      }
-    }
+  // ─── Extracted hooks ───
 
-    if (atIndex >= 0) {
-      const query = text.slice(atIndex + 1, cursorPos);
-      // Only show if query doesn't contain spaces (still typing the filename)
-      if (!query.includes(' ')) {
-        setShowFileMention(true);
-        setFileMentionQuery(query);
-        setMentionStartIndex(atIndex);
-        return;
-      }
-    }
+  const {
+    mentions,
+    showFileMention,
+    fileMentionQuery,
+    checkForFileMention,
+    handleFileSelect,
+    handleFileMentionClose,
+    handleRemoveMention,
+    buildPromptWithMentions,
+  } = usePromptMentions({ taskId, prompt, updatePrompt, textareaRef });
 
-    setShowFileMention(false);
-    setFileMentionQuery('');
-    setMentionStartIndex(-1);
-  }, []);
+  const {
+    fileInputRef,
+    pendingFiles,
+    handleFilesSelected,
+    openFilePicker,
+    removeFile,
+    retryUpload,
+    clearFiles,
+    getUploadedFileIds,
+    hasUploadingFiles,
+  } = usePromptAttachments({ taskId });
 
-  // Handle file selection from dropdown
-  const handleFileSelect = useCallback((filePath: string) => {
-    if (mentionStartIndex >= 0 && taskId) {
-      // Get just the filename for display
-      const fileName = filePath.split('/').pop() || filePath;
+  // ─── Slash command detection ───
 
-      // Remove the @query from textarea (just show chip above)
-      const before = prompt.slice(0, mentionStartIndex);
-      const cursorPos = textareaRef.current?.selectionStart || prompt.length;
-      const after = prompt.slice(cursorPos);
-      const newPrompt = `${before}${after}`.trim();
-      updatePrompt(newPrompt);
-
-      // Add to context mention store
-      addFileMention(taskId, fileName, filePath);
-
-      // Focus back on textarea
-      setTimeout(() => {
-        textareaRef.current?.focus();
-      }, 0);
-    }
-    setShowFileMention(false);
-    setFileMentionQuery('');
-    setMentionStartIndex(-1);
-  }, [mentionStartIndex, prompt, updatePrompt, taskId, addFileMention]);
-
-  const handleFileMentionClose = useCallback(() => {
-    setShowFileMention(false);
-    setFileMentionQuery('');
-    setMentionStartIndex(-1);
-  }, []);
-
-  // Remove a mentioned file/lines
-  const handleRemoveMention = useCallback((displayName: string) => {
-    if (taskId) {
-      removeMention(taskId, displayName);
-    }
-  }, [taskId, removeMention]);
-
-  // Detect slash command input
   useEffect(() => {
-    // Clear selected command if prompt no longer matches it
     if (selectedCommand && !prompt.startsWith(`/${selectedCommand}`)) {
       setSelectedCommand(null);
     }
 
-    // Only show command selector if user has typed, not for initial values
     if (!userHasTyped) {
       setShowCommands(false);
       return;
     }
 
     if (prompt.startsWith('/')) {
-      // Show commands if not yet selected or if only "/" or still typing command name
       const afterSlash = prompt.slice(1);
       const hasSpace = afterSlash.includes(' ');
 
-      // Only show selector if there's no space (still typing command name)
       if (!hasSpace) {
         setShowCommands(true);
         const filter = afterSlash.split(' ')[0];
@@ -231,7 +158,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     };
 
     fetchStats();
-    // Poll every 5 seconds while task is open
     const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
   }, [taskId]);
@@ -244,28 +170,21 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     const rewindPrompt = localStorage.getItem(storageKey);
 
     if (rewindPrompt) {
-      // Pre-fill the input with the rewind prompt
       updatePrompt(rewindPrompt);
-      // Clear the stored prompt so it doesn't persist
       localStorage.removeItem(storageKey);
-      // Focus the textarea
       setTimeout(() => {
         textareaRef.current?.focus();
-        // Select all text so user can easily modify or replace
         textareaRef.current?.select();
       }, 100);
     }
   }, [taskId, updatePrompt]);
 
-  // Check for rewind prompt on mount and taskId change
   useEffect(() => {
     applyRewindPrompt();
   }, [taskId, applyRewindPrompt]);
 
-  // Listen for rewind-complete event to re-check localStorage
   useEffect(() => {
     const handleRewindComplete = () => {
-      // Small delay to ensure localStorage is updated
       setTimeout(applyRewindPrompt, 50);
     };
 
@@ -273,23 +192,13 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     return () => window.removeEventListener('rewind-complete', handleRewindComplete);
   }, [applyRewindPrompt]);
 
-  const handleFilesSelected = async (files: File[]) => {
-    if (!taskId) return;
-    try {
-      await addFiles(taskId, files);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to upload files');
-    }
-  };
+  // ─── Submit ───
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    // Allow submit if there's text OR context mentions
-    // When streaming, allow submit for interrupt-and-send flow
     if (!prompt.trim() && mentions.length === 0) return;
     if (disabled && !isStreaming) return;
 
-    // Check if files are still uploading
     if (taskId && hasUploadingFiles(taskId)) {
       toast.error(t('waitForUpload'));
       return;
@@ -299,14 +208,12 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     let finalPrompt = originalPrompt;
     let displayPrompt: string | undefined;
 
-    // Build prompt with context mentions (files and lines)
     if (taskId && mentions.length > 0) {
       const result = buildPromptWithMentions(taskId, originalPrompt);
       finalPrompt = result.finalPrompt;
       displayPrompt = result.displayPrompt;
     }
 
-    // If it's a command, process it
     if (selectedCommand || prompt.startsWith('/')) {
       const match = prompt.match(/^\/(\w+)(?::(\w+))?\s*(.*)/);
       if (match) {
@@ -331,59 +238,33 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
       }
     }
 
-    // Get uploaded file IDs
     const fileIds = taskId ? getUploadedFileIds(taskId) : [];
 
-    // If streaming, use interrupt-and-send flow to cancel current attempt and send new message
     if (isStreaming && onInterruptAndSend) {
       onInterruptAndSend(finalPrompt, displayPrompt, fileIds.length > 0 ? fileIds : undefined);
     } else {
       onSubmit(finalPrompt, displayPrompt, fileIds.length > 0 ? fileIds : undefined);
     }
 
-    // Clear state - but keep mentions for persistent file references
     updatePrompt('');
     setSelectedCommand(null);
     setShowCommands(false);
     if (taskId) {
-      // Only clear uploaded files, keep context mentions
       clearFiles(taskId);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Let file mention dropdown handle these keys when visible
-    if (showFileMention && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Tab' || e.key === 'Enter' || e.key === 'Escape')) {
-      // Don't prevent default for Tab/Enter if no results - those are handled by dropdown
-      return;
-    }
+  // ─── Keyboard ───
 
-    if (showCommands && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape')) {
-      return;
-    }
-
-    // Enter to send, Shift+Enter or Ctrl+Enter for newline
-    if (!disableSubmitShortcut && e.key === 'Enter') {
-      if (e.shiftKey || e.ctrlKey) {
-        // Allow newline (default behavior)
-        return;
-      }
-      // Send message
-      e.preventDefault();
-      handleSubmit(e as any);
-    }
-
-    if (e.key === 'Escape') {
-      if (showFileMention) {
-        e.preventDefault();
-        handleFileMentionClose();
-      } else if (showCommands) {
-        e.preventDefault();
-        setShowCommands(false);
-        updatePrompt('');
-      }
-    }
-  };
+  const { handleKeyDown } = usePromptKeyboard({
+    showFileMention,
+    showCommands,
+    disableSubmitShortcut,
+    handleSubmit,
+    handleFileMentionClose,
+    setShowCommands,
+    updatePrompt,
+  });
 
   // Handle paste event for images
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -394,7 +275,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
 
     const imageFiles: File[] = [];
 
-    // Check for image files in clipboard
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item.type.startsWith('image/')) {
@@ -405,7 +285,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
       }
     }
 
-    // If images found, prevent default paste and upload them
     if (imageFiles.length > 0) {
       e.preventDefault();
       await handleFilesSelected(imageFiles);
@@ -417,12 +296,10 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     const newValue = e.target.value;
     updatePrompt(newValue);
 
-    // Mark that user has started typing
     if (!userHasTyped) {
       setUserHasTyped(true);
     }
 
-    // Check for file mention
     const cursorPos = e.target.selectionStart || 0;
     checkForFileMention(newValue, cursorPos);
   };
@@ -471,10 +348,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
     }
   };
 
-  const openFilePicker = () => {
-    fileInputRef.current?.click();
-  };
-
   // Expose submit and focus functions to parent via ref
   useImperativeHandle(ref, () => ({
     submit: () => {
@@ -494,42 +367,20 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
       className={cn('relative flex flex-col overflow-visible', className)}
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-2 w-full min-w-0 overflow-visible">
-        {/* Context Mentions Bar (files and line selections) */}
-        {mentions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-1">
-            {mentions.map((mention) => (
-              <div
-                key={mention.displayName}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-muted/80 rounded text-xs group max-w-full"
-                title={mention.type === 'lines' ? `${mention.filePath}#L${mention.startLine}-${mention.endLine}` : mention.filePath}
-              >
-                <FileIcon name={mention.fileName} type="file" className="size-3 shrink-0" />
-                <span className="text-foreground truncate">{mention.type === 'lines' ? `@${mention.filePath}#L${mention.startLine}-${mention.endLine}` : `@${mention.filePath}`}</span>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveMention(mention.displayName)}
-                  className="text-muted-foreground hover:text-foreground opacity-60 group-hover:opacity-100 transition-opacity shrink-0"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Context Mentions Bar */}
+        <MentionsBar mentions={mentions} onRemove={handleRemoveMention} />
 
         {/* Attachment Bar */}
-        {taskId && pendingFiles.length > 0 && (
-          <AttachmentBar
-            files={pendingFiles}
-            onRemove={(tempId) => removeFile(taskId, tempId)}
-            onRetry={(tempId) => retryUpload(taskId, tempId)}
-            onAddFiles={openFilePicker}
-          />
-        )}
+        <AttachmentBarSection
+          taskId={taskId}
+          pendingFiles={pendingFiles}
+          onRemove={(tempId) => removeFile(taskId!, tempId)}
+          onRetry={(tempId) => retryUpload(taskId!, tempId)}
+          onAddFiles={openFilePicker}
+        />
 
         {/* Input area */}
         <div className="relative w-full min-w-0 max-w-full overflow-visible">
-          {/* Command Selector */}
           <CommandSelector
             isOpen={showCommands}
             onSelect={handleCommandSelect}
@@ -538,7 +389,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
             projectPath={projectPath}
           />
 
-          {/* File Mention Dropdown */}
           <FileMentionDropdown
             query={fileMentionQuery}
             onSelect={handleFileSelect}
@@ -556,7 +406,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onFocus={() => {
-                  // Set cursor position on focus (removed scrollIntoView to prevent layout shift)
                   setTimeout(() => {
                     textareaRef.current?.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
                   }, 100);
@@ -567,8 +416,6 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
                 className="resize-none w-full min-w-0 max-w-full overflow-y-auto overflow-x-hidden border-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm whitespace-pre-wrap break-words"
                 style={{
                   fontSize: '14px',
-                  // Only use fieldSizing when minRows is 1 (auto-sizing from 1 row)
-                  // Otherwise disable it so minRows/maxRows height constraints work properly
                   fieldSizing: minRows === 1 ? 'content' : 'fixed',
                   minHeight: `${minRows * 24 + 16}px`,
                   maxHeight: `${maxRows * 24 + 16}px`,
@@ -578,19 +425,8 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
 
             {/* Buttons row - below textarea */}
             <div className="flex items-center justify-between px-2 py-1.5 bg-transparent dark:bg-input/30">
-              {/* Command badge - shown when command is active */}
               <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={openFilePicker}
-                  disabled={disabled || isStreaming}
-                  title={t('attachFilesTitle')}
-                  className="size-8"
-                >
-                  <Paperclip className="size-4" />
-                </Button>
+                <PaperclipButton disabled={disabled} isStreaming={isStreaming} onClick={openFilePicker} />
                 {prompt.startsWith('/') && (() => {
                   const cmdPart = prompt.split(' ')[0];
                   return (
@@ -675,7 +511,7 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
                   <span>{t('filesHint')}</span>
                 </span>
                 <span className="flex items-center gap-1">
-                  <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">⌘V</kbd>
+                  <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] font-mono">&#x2318;V</kbd>
                   <span>{t('pasteImageHint')}</span>
                 </span>
               </div>
@@ -731,24 +567,13 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
       </form>
 
       {/* Hidden file input for Paperclip button */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*,.pdf,.txt,.md,.ts,.tsx,.js,.jsx,.json,.css,.html"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          const files = Array.from(e.target.files || []);
-          if (files.length > 0) {
-            handleFilesSelected(files);
-          }
-          e.target.value = '';
-        }}
+      <HiddenFileInput
+        fileInputRef={fileInputRef}
         disabled={disabled}
+        onFilesSelected={handleFilesSelected}
       />
     </FileDropZone>
   );
 });
 
 PromptInput.displayName = 'PromptInput';
-
