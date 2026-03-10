@@ -1,99 +1,35 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Loader2, RefreshCw, GitBranch, ArrowUp, ArrowDown, Check, ChevronDown, ChevronRight, Plus, Minus, Undo2, Sparkles } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Loader2, RefreshCw, GitBranch, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Plus, Minus, Undo2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { GitSection } from './git-section';
 import { GitGraph } from './git-graph';
 import { GitFileItem } from './git-file-item';
+import { GitCommitForm } from './git-commit-form';
 import { BranchCheckoutModal } from './branch-checkout-modal';
+import { useGitActions } from './use-git-actions';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useSidebarStore } from '@/stores/sidebar-store';
 import { cn } from '@/lib/utils';
-import type { GitStatus, GitFileStatus } from '@/types';
 
 export function GitPanel() {
   const t = useTranslations('git');
   const tCommon = useTranslations('common');
   const activeProject = useActiveProject();
   const { openDiffTab } = useSidebarStore();
-  const [status, setStatus] = useState<GitStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [commitTitle, setCommitTitle] = useState('');
-  const [commitDescription, setCommitDescription] = useState('');
-  const [committing, setCommitting] = useState(false);
-  const [generatingMessage, setGeneratingMessage] = useState(false);
   const [changesExpanded, setChangesExpanded] = useState(true);
   const [stagedExpanded, setStagedExpanded] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [branchModalOpen, setBranchModalOpen] = useState(false);
-  const isComponentMountedRef = useRef(true);
-  const fetchedPathRef = useRef<string | null>(null);
 
-  const fetchStatus = useCallback(async (forceRefresh = false) => {
-    if (!activeProject?.path) {
-      setStatus(null);
-      setLoading(false);
-      fetchedPathRef.current = null;
-      return;
-    }
-
-    // Skip if already fetched this path (unless force refresh)
-    if (!forceRefresh && fetchedPathRef.current === activeProject.path) return;
-
-    if (!isComponentMountedRef.current) return;
-
-    fetchedPathRef.current = activeProject.path;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/git/status?path=${encodeURIComponent(activeProject.path)}`
-      );
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to fetch git status');
-      }
-      const data = await res.json();
-      if (isComponentMountedRef.current) {
-        setStatus(data);
-        setLastUpdated(new Date());
-      }
-    } catch (err) {
-      if (isComponentMountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-        setStatus(null);
-      }
-    } finally {
-      if (isComponentMountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [activeProject?.path]);
-
-  // Fetch on mount and when project changes
-  useEffect(() => {
-    isComponentMountedRef.current = true;
-    fetchStatus();
-    return () => {
-      isComponentMountedRef.current = false;
-    };
-  }, [fetchStatus]);
-
-  // Auto-refresh on window focus
-  useEffect(() => {
-    const handleFocus = () => {
-      fetchStatus();
-    };
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [fetchStatus]);
+  const {
+    status, loading, error, changes, syncing,
+    fetchStatus, stageFile, unstageFile, discardFile,
+    stageAll, unstageAll, discardAll, addToGitignore,
+    handleSync, handleBranchCheckout,
+  } = useGitActions({ projectPath: activeProject?.path, t });
 
   const handleFileClick = useCallback(
     (path: string, staged: boolean) => {
@@ -102,225 +38,6 @@ export function GitPanel() {
     },
     [openDiffTab]
   );
-
-  // Git operations
-  const stageFile = useCallback(async (filePath: string) => {
-    if (!activeProject?.path) return;
-    try {
-      await fetch('/api/git/stage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, files: [filePath] }),
-      });
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to stage file:', err);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const unstageFile = useCallback(async (filePath: string) => {
-    if (!activeProject?.path) return;
-    try {
-      await fetch('/api/git/stage', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, files: [filePath] }),
-      });
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to unstage file:', err);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const discardFile = useCallback(async (filePath: string) => {
-    if (!activeProject?.path) return;
-    if (!confirm(t('discardChangesConfirm', { filePath }))) return;
-    try {
-      await fetch('/api/git/discard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, files: [filePath] }),
-      });
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to discard file:', err);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const stageAll = useCallback(async () => {
-    if (!activeProject?.path) return;
-    try {
-      await fetch('/api/git/stage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, all: true }),
-      });
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to stage all:', err);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const unstageAll = useCallback(async () => {
-    if (!activeProject?.path) return;
-    try {
-      await fetch('/api/git/stage', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, all: true }),
-      });
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to unstage all:', err);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const discardAll = useCallback(async () => {
-    if (!activeProject?.path) return;
-    if (!confirm(t('discardAllConfirm'))) return;
-    try {
-      await fetch('/api/git/discard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, all: true }),
-      });
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to discard all:', err);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const addToGitignore = useCallback(async (filePath: string) => {
-    if (!activeProject?.path) return;
-    try {
-      const res = await fetch('/api/git/gitignore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, filePath }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || t('failedToAddGitignore'));
-      }
-      fetchStatus(true);
-    } catch (err) {
-      console.error('Failed to add to .gitignore:', err);
-      alert(err instanceof Error ? err.message : t('failedToAddGitignore'));
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const handleCommit = useCallback(async () => {
-    if (!activeProject?.path || !commitTitle.trim()) return;
-    setCommitting(true);
-    try {
-      // Auto-stage all changes before commit
-      await fetch('/api/git/stage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path, all: true }),
-      });
-
-      // Then commit with title and description
-      const res = await fetch('/api/git/commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectPath: activeProject.path,
-          title: commitTitle,
-          description: commitDescription,
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || t('failedToCommit'));
-      }
-      setCommitTitle('');
-      setCommitDescription('');
-      fetchStatus(true);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : t('failedToCommit'));
-    } finally {
-      setCommitting(false);
-    }
-  }, [activeProject?.path, commitTitle, commitDescription, fetchStatus]);
-
-  const handleGenerateMessage = useCallback(async () => {
-    if (!activeProject?.path) return;
-
-    setGeneratingMessage(true);
-    try {
-      const res = await fetch('/api/git/generate-message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || t('failedToGenerateCommit'));
-      }
-
-      const { title, description } = await res.json();
-      setCommitTitle(title || '');
-      setCommitDescription(description || '');
-    } catch (err) {
-      console.error('AI generation error:', err);
-      alert(err instanceof Error ? err.message : t('failedToGenerateCommit'));
-    } finally {
-      setGeneratingMessage(false);
-    }
-  }, [activeProject?.path]);
-
-  const handleSync = useCallback(async () => {
-    if (!activeProject?.path) return;
-    setSyncing(true);
-    try {
-      const res = await fetch('/api/git/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: activeProject.path }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || t('failedToPush'));
-      }
-      fetchStatus(true);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : t('failedToPush'));
-    } finally {
-      setSyncing(false);
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  const handleBranchCheckout = useCallback(async (branch: string) => {
-    if (!activeProject?.path) return;
-
-    try {
-      const res = await fetch('/api/git/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectPath: activeProject.path,
-          commitish: branch,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to checkout branch');
-      }
-
-      await fetchStatus(true);
-    } catch (err) {
-      throw err;
-    }
-  }, [activeProject?.path, fetchStatus]);
-
-  // Combine unstaged and untracked into single "Changes" section
-  const changes: GitFileStatus[] = useMemo(() => {
-    if (!status) return [];
-    return [...(status.unstaged || []), ...(status.untracked || [])];
-  }, [status]);
 
   if (loading && !status) {
     return (
@@ -350,8 +67,7 @@ export function GitPanel() {
   }
 
   const totalChanges = (status?.staged.length || 0) + changes.length;
-  const canCommit = totalChanges > 0 && commitTitle.trim().length > 0;
-  const hasUnpushedCommits = (status?.ahead || 0) > 0 && totalChanges === 0; // Only show sync when no uncommitted changes
+  const hasUnpushedCommits = (status?.ahead || 0) > 0 && totalChanges === 0;
 
   return (
     <div className="flex flex-col h-full">
@@ -399,9 +115,8 @@ export function GitPanel() {
       {/* File sections */}
       <ScrollArea className="flex-1">
         <div className="py-1">
-          {/* CHANGES section with commit input inside */}
           <div className="mb-1">
-            {/* Section header */}
+            {/* Changes section header */}
             <div
               className={cn(
                 'group flex items-center gap-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide',
@@ -409,133 +124,40 @@ export function GitPanel() {
               )}
               onClick={() => setChangesExpanded(!changesExpanded)}
             >
-              {changesExpanded ? (
-                <ChevronDown className="size-4" />
-              ) : (
-                <ChevronRight className="size-4" />
-              )}
+              {changesExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
               <span className="flex-1">{t('changes')}</span>
-
-              {/* Section action buttons */}
               <div className="flex items-center gap-0.5">
                 <button
                   className="p-0.5 hover:bg-accent rounded text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    discardAll();
-                  }}
+                  onClick={(e) => { e.stopPropagation(); discardAll(); }}
                   title={t('discardAllChanges')}
                 >
                   <Undo2 className="size-3.5" />
                 </button>
                 <button
                   className="p-0.5 hover:bg-accent rounded"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    stageAll();
-                  }}
+                  onClick={(e) => { e.stopPropagation(); stageAll(); }}
                   title={t('stageAllChanges')}
                 >
                   <Plus className="size-3.5" />
                 </button>
               </div>
-
-              {/* File count badge */}
               <span className="px-1.5 py-0.5 bg-muted/80 rounded text-[10px] font-semibold ml-1">
                 {totalChanges}
               </span>
             </div>
 
-            {/* Changes content - commit input + file lists */}
+            {/* Changes content - commit form + file lists */}
             {changesExpanded && (
               <div className="mt-0.5">
-                {/* Commit message input inside Changes section */}
-                <div className="px-2 pb-2 space-y-1.5">
-                  {/* Commit title input */}
-                  <input
-                    type="text"
-                    className="w-full px-2 py-1.5 text-sm bg-muted/50 border rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder={t('commitTitle')}
-                    value={commitTitle}
-                    onChange={(e) => setCommitTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) {
-                        handleCommit();
-                      }
-                    }}
-                  />
-                  {/* Commit description textarea */}
-                  <textarea
-                    className="w-full min-h-[60px] px-2 py-1.5 text-sm bg-muted/50 border rounded-md focus:outline-none focus:ring-1 focus:ring-ring resize-y"
-                    placeholder={t('descriptionOptional')}
-                    value={commitDescription}
-                    onChange={(e) => setCommitDescription(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) {
-                        handleCommit();
-                      }
-                    }}
-                  />
-                  <div className="flex gap-1.5 mt-1.5">
-                    {/* Commit or Sync button */}
-                    <Button
-                      className="flex-1"
-                      size="sm"
-                      disabled={(!canCommit && !hasUnpushedCommits) || committing || syncing}
-                      onClick={hasUnpushedCommits ? handleSync : handleCommit}
-                    >
-                      {committing || syncing ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : hasUnpushedCommits ? (
-                        <>
-                          <ArrowUp className="size-4 mr-1" />
-                          {t('syncChanges')}
-                        </>
-                      ) : (
-                        <>
-                          <Check className="size-4 mr-1" />
-                          {t('commitChanges')}
-                        </>
-                      )}
-                    </Button>
-
-                    {/* Generate commit message button */}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="px-2"
-                      title={
-                        totalChanges === 0
-                          ? t('noChangesToGenerate')
-                          : generatingMessage
-                          ? t('generatingCommit')
-                          : t('generateCommitMessage')
-                      }
-                      onClick={handleGenerateMessage}
-                      disabled={generatingMessage || totalChanges === 0}
-                    >
-                      {generatingMessage ? (
-                        <Image
-                          src="/logo.svg"
-                          alt="Generate"
-                          width={20}
-                          height={20}
-                          className="opacity-80 animate-spin"
-                          unoptimized
-                        />
-                      ) : (
-                        <Image
-                          src="/logo.svg"
-                          alt="Generate"
-                          width={20}
-                          height={20}
-                          className="opacity-80"
-                          unoptimized
-                        />
-                      )}
-                    </Button>
-                  </div>
-                </div>
+                <GitCommitForm
+                  projectPath={activeProject.path}
+                  totalChanges={totalChanges}
+                  hasUnpushedCommits={hasUnpushedCommits}
+                  syncing={syncing}
+                  onSync={handleSync}
+                  onCommitComplete={() => fetchStatus(true)}
+                />
 
                 {totalChanges === 0 ? (
                   <div className="flex flex-col items-center justify-center py-4 text-muted-foreground text-sm">
@@ -544,7 +166,7 @@ export function GitPanel() {
                   </div>
                 ) : (
                   <>
-                    {/* Staged Changes subsection */}
+                    {/* Staged changes subsection */}
                     {(status?.staged.length || 0) > 0 && (
                       <div className="mb-1">
                         <div
@@ -554,19 +176,12 @@ export function GitPanel() {
                           )}
                           onClick={() => setStagedExpanded(!stagedExpanded)}
                         >
-                          {stagedExpanded ? (
-                            <ChevronDown className="size-3" />
-                          ) : (
-                            <ChevronRight className="size-3" />
-                          )}
+                          {stagedExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
                           <span className="flex-1">{t('staged')}</span>
                           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               className="p-0.5 hover:bg-accent rounded"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                unstageAll();
-                              }}
+                              onClick={(e) => { e.stopPropagation(); unstageAll(); }}
                               title={t('unstageAll')}
                             >
                               <Minus className="size-3" />
@@ -594,7 +209,7 @@ export function GitPanel() {
                       </div>
                     )}
 
-                    {/* Unstaged Changes */}
+                    {/* Unstaged changes */}
                     {changes.length > 0 && (
                       <div>
                         {changes.map((file) => (
