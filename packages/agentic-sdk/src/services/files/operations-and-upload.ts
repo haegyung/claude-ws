@@ -7,13 +7,13 @@ import fs from 'fs';
 import path from 'path';
 import { rm, rename, mkdir, writeFile, readFile } from 'fs/promises';
 import AdmZip from 'adm-zip';
-import { getContentTypeForExtension } from './file-mime-and-language-constants';
+import { getContentTypeForExtension } from './mime-and-language-constants';
 import {
   validateRootPath,
   validatePathWithinRoot,
   isCompressedFile,
   extractArchive,
-} from './file-operations-path-security-and-compression-helpers.ts';
+} from './operations-path-security-and-compression-helpers.ts';
 
 export function createFileOperationsService() {
   return {

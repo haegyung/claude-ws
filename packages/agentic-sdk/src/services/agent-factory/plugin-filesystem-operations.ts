@@ -7,7 +7,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { homedir } from 'os';
-import { discoverComponents, type DiscoveredItem, type DiscoveredFolder } from './agent-factory-component-discovery-service';
+import { discoverComponents, type DiscoveredItem, type DiscoveredFolder } from './component-discovery';
 
 export type { DiscoveredItem, DiscoveredFolder };
 

@@ -4,8 +4,8 @@
  * Uses factory pattern for db injection — call createDependencyResolverService(db, schema)
  */
 import { eq, and } from 'drizzle-orm';
-import { dependencyExtractor } from './agent-factory-dependency-extractor-service.ts';
-import type { LibraryDep, PluginDep } from './agent-factory-dependency-extractor-parsers-service.ts';
+import { dependencyExtractor } from './dependency-extractor.ts';
+import type { LibraryDep, PluginDep } from './dependency-extractor-parsers.ts';
 
 export type { LibraryDep, PluginDep };
 

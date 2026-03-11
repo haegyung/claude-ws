@@ -10,10 +10,10 @@ import {
   extractLibraries,
   extractComponents,
   analyzePackageFiles,
-} from './agent-factory-dependency-extractor-parsers-service.ts';
+} from './dependency-extractor-parsers.ts';
 
-export type { LibraryDep, PluginDep } from './agent-factory-dependency-extractor-parsers-service.ts';
-import type { LibraryDep, PluginDep } from './agent-factory-dependency-extractor-parsers-service.ts';
+export type { LibraryDep, PluginDep } from './dependency-extractor-parsers.ts';
+import type { LibraryDep, PluginDep } from './dependency-extractor-parsers.ts';
 
 export interface ExtractedDeps {
   libraries: LibraryDep[];

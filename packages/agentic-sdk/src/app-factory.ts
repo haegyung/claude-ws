@@ -9,16 +9,16 @@ import { createDbConnection } from './db/database-connection';
 import { initDbTables } from './db/database-init-tables';
 import { AgentProvider } from './agent/claude-sdk-agent-provider';
 import { AgentManager } from './agent/agent-lifecycle-manager';
-import { createProjectService } from './services/project-crud-service';
-import { createTaskService } from './services/task-crud-and-reorder-service';
-import { createAttemptService } from './services/attempt-crud-and-logs-service';
-import { createCheckpointService } from './services/checkpoint-crud-and-rewind-service';
-import { createFileService } from './services/filesystem-read-write-service';
-import { createSearchService } from './services/content-search-and-file-glob-service';
-import { createUploadService } from './services/attempt-file-upload-storage-service';
-import { createShellService } from './services/shell-process-db-tracking-service';
-import { createCommandService } from './services/slash-command-listing-service';
-import { createAgentFactoryService } from './services/agent-factory-plugin-registry-service';
+import { createProjectService } from './services/project-crud';
+import { createTaskService } from './services/task-crud-and-reorder';
+import { createAttemptService } from './services/attempts/crud-and-logs';
+import { createCheckpointService } from './services/checkpoints/crud-and-rewind';
+import { createFileService } from './services/files/read-write';
+import { createSearchService } from './services/content-search-and-file-glob';
+import { createUploadService } from './services/attempts/file-upload-storage';
+import { createShellService } from './services/shell-process-db-tracking';
+import { createCommandService } from './services/slash-command-listing';
+import { createAgentFactoryService } from './services/agent-factory/plugin-registry';
 import type { EnvConfig } from './config/env-config';
 
 // Route imports

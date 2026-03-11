@@ -5,7 +5,7 @@
 import { readFile, writeFile, mkdir, cp } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { getAgentFactoryDir } from './agent-factory-dir-resolver-service';
+import { getAgentFactoryDir } from './dir-resolver';
 
 export function createAgentFactoryImportService(db: any, registryService: any) {
   return {

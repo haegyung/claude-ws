@@ -3,7 +3,7 @@
  * Standalone generator functions for each package manager (npm, pnpm, yarn, pip, poetry, cargo, go)
  * Used by agent-factory-install-script-generator-service to delegate per-manager script generation
  */
-import type { LibraryDep } from './agent-factory-dependency-extractor-parsers-service.ts';
+import type { LibraryDep } from './dependency-extractor-parsers.ts';
 
 /**
  * Validate and sanitize package name to prevent shell injection
