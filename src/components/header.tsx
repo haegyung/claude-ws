@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Settings, Plus, Search, PanelLeft, PanelRight, FolderTree, MessageCircleQuestion, Network, Terminal, X } from 'lucide-react';
+import { Settings, Plus, Search, PanelLeft, PanelRight, FolderTree, MessageCircleQuestion, Network, Terminal, X, MoreVertical } from 'lucide-react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -149,30 +149,15 @@ export function Header({ onCreateTask, onAddProject, searchQuery: externalSearch
             </Tooltip>
           </TooltipProvider>
 
-          {/* Project selector - icon button on mobile, full dropdown on desktop */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Mobile: Project dropdown icon */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="sm:hidden">
-                  <FolderTree className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <ProjectSelectorContent onAddProject={onAddProject} />
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Desktop: Full project selector */}
-            <div className="hidden sm:flex items-center gap-2">
-              <ProjectSelector onAddProject={onAddProject} />
-              <span className="text-xs text-muted-foreground">
-                ({tasks.length} tasks)
-              </span>
-            </div>
+          {/* Desktop: Project selector */}
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
+            <ProjectSelector onAddProject={onAddProject} />
+            <span className="text-xs text-muted-foreground">
+              ({tasks.length} tasks)
+            </span>
           </div>
 
-          {/* Questions panel toggle */}
+          {/* Questions panel toggle - visible on all viewports */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -201,7 +186,7 @@ export function Header({ onCreateTask, onAddProject, searchQuery: externalSearch
             </Tooltip>
           </TooltipProvider>
 
-          {/* Workflow panel toggle */}
+          {/* Desktop: Workflow panel toggle */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -209,7 +194,7 @@ export function Header({ onCreateTask, onAddProject, searchQuery: externalSearch
                   variant={workflowPanelOpen ? 'secondary' : 'ghost'}
                   size="icon"
                   onClick={toggleWorkflowPanel}
-                  className="shrink-0 relative"
+                  className="shrink-0 relative hidden sm:inline-flex"
                 >
                   <Network className="h-4 w-4" />
                   {activeAgentCount > 0 && (
@@ -227,7 +212,7 @@ export function Header({ onCreateTask, onAddProject, searchQuery: externalSearch
             </Tooltip>
           </TooltipProvider>
 
-          {/* Terminal toggle */}
+          {/* Desktop: Terminal toggle */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -235,7 +220,7 @@ export function Header({ onCreateTask, onAddProject, searchQuery: externalSearch
                   variant={terminalOpen ? 'secondary' : 'ghost'}
                   size="icon"
                   onClick={toggleTerminal}
-                  className="shrink-0"
+                  className="shrink-0 hidden sm:inline-flex"
                 >
                   <Terminal className="h-4 w-4" />
                 </Button>
@@ -245,6 +230,36 @@ export function Header({ onCreateTask, onAddProject, searchQuery: externalSearch
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
+
+          {/* Mobile: Overflow menu for secondary actions */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="sm:hidden shrink-0 relative">
+                <MoreVertical className="h-4 w-4" />
+                {/* Show dot indicator when there are active agents */}
+                {(activeAgentCount > 0) && (
+                  <span className="absolute top-1 right-1 h-2 w-2 bg-blue-500 rounded-full" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {/* Project selector in overflow */}
+              <ProjectSelectorContent onAddProject={onAddProject} />
+              <DropdownMenuItem onClick={toggleWorkflowPanel}>
+                <Network className="h-4 w-4 mr-2" />
+                Agent workflow
+                {activeAgentCount > 0 && (
+                  <span className="ml-auto text-xs bg-blue-500 text-white rounded-full h-5 min-w-5 px-1.5 flex items-center justify-center">
+                    {activeAgentCount}
+                  </span>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={toggleTerminal}>
+                <Terminal className="h-4 w-4 mr-2" />
+                Terminal
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Right sidebar toggle - opens panel with New Task and Settings */}
           <TooltipProvider>
