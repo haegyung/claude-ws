@@ -6,15 +6,19 @@
  *
  * Tabs and session IDs are persisted so panel toggle / page refresh
  * can reconnect to still-alive backend PTY sessions.
+ *
+ * Heavy session actions extracted to terminal-store-socket-session-actions.ts
  */
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { getSocket } from '@/lib/socket-service';
-import { createLogger } from '@/lib/logger';
-import type { Socket } from 'socket.io-client';
-
-const log = createLogger('TerminalStore');
+import {
+  attachListenersAction,
+  reconnectTabsAction,
+  createTerminalAction,
+  closeTerminalAction,
+} from './terminal-store-socket-session-actions';
 
 export interface TerminalInstanceActions {
   copySelection: () => void;
@@ -55,7 +59,6 @@ interface TerminalActions {
   sendResize: (terminalId: string, cols: number, rows: number) => void;
   renameTerminal: (terminalId: string, title: string) => void;
   closeAllTerminals: () => void;
-  /** Re-subscribe to existing PTY sessions after reconnect / page refresh */
   reconnectTabs: () => Promise<void>;
   _attachListeners: () => void;
   setSelectionMode: (id: string, active: boolean) => void;
@@ -64,7 +67,6 @@ interface TerminalActions {
   copySelection: (id: string) => void;
   selectAll: (id: string) => void;
   pasteClipboard: (id: string) => void;
-  /** Paste pre-read text via xterm.paste() — keeps IME state clean */
   pasteText: (id: string, text: string) => void;
   clearTerminal: (id: string) => void;
 }
@@ -74,27 +76,6 @@ type TerminalStore = TerminalState & TerminalActions;
 export const MIN_PANEL_HEIGHT = 150;
 export const MAX_PANEL_HEIGHT = 600;
 const DEFAULT_PANEL_HEIGHT = 300;
-
-/** Find the lowest available tab number (1-based) not already used by current tabs */
-function nextAvailableTabNumber(tabs: TerminalTab[]): number {
-  const usedNumbers = new Set(
-    tabs.map((t) => {
-      const match = t.title.match(/^Terminal (\d+)$/);
-      return match ? parseInt(match[1], 10) : 0;
-    })
-  );
-  let n = 1;
-  while (usedNumbers.has(n)) n++;
-  return n;
-}
-
-/** Wait for socket to be connected, resolves immediately if already connected */
-function waitForConnection(socket: Socket): Promise<void> {
-  if (socket.connected) return Promise.resolve();
-  return new Promise((resolve) => {
-    socket.once('connect', () => resolve());
-  });
-}
 
 export const useTerminalStore = create<TerminalStore>()(
   persist(
@@ -112,178 +93,50 @@ export const useTerminalStore = create<TerminalStore>()(
       openPanel: () => set({ isOpen: true }),
       closePanel: () => set({ isOpen: false }),
 
-      setPanelHeight: (height) => {
-        set({ panelHeight: Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, height)) });
-      },
+      setPanelHeight: (height) =>
+        set({ panelHeight: Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, height)) }),
 
-      _attachListeners: () => {
-        if (get()._listenersAttached) return;
-        const socket = getSocket();
-        socket.on('terminal:exit', (data: { terminalId: string }) => {
-          set((s) => ({
-            tabs: s.tabs.map((t) =>
-              t.id === data.terminalId ? { ...t, isConnected: false } : t
-            ),
-          }));
-        });
-        set({ _listenersAttached: true });
-      },
+      _attachListeners: () => attachListenersAction(set, get),
 
-      reconnectTabs: async () => {
-        const { tabs, _attachListeners } = get();
-        if (tabs.length === 0) return;
+      reconnectTabs: () => reconnectTabsAction(set, get),
 
-        _attachListeners();
-        const socket = getSocket();
-        await waitForConnection(socket);
+      createTerminal: (projectId) => createTerminalAction(projectId, set, get),
 
-        // Check each persisted tab — if PTY still alive, re-subscribe; otherwise mark dead
-        const updatedTabs: TerminalTab[] = [];
-        for (const tab of tabs) {
-          const alive = await new Promise<boolean>((resolve) => {
-            socket.emit(
-              'terminal:check',
-              { terminalId: tab.id },
-              (result: { alive: boolean }) => resolve(result?.alive ?? false)
-            );
-            // Timeout after 2s — treat as dead
-            setTimeout(() => resolve(false), 2000);
-          });
-
-          if (alive) {
-            socket.emit('terminal:subscribe', { terminalId: tab.id });
-            updatedTabs.push({ ...tab, isConnected: true });
-          } else {
-            // PTY is gone — remove stale tab
-            log.info({ terminalId: tab.id }, 'Stale terminal session removed');
-          }
-        }
-
-        const { activeTabId } = get();
-        const activeStillExists = updatedTabs.some((t) => t.id === activeTabId);
-        set({
-          tabs: updatedTabs,
-          activeTabId: activeStillExists
-            ? activeTabId
-            : updatedTabs.length > 0
-              ? updatedTabs[0].id
-              : null,
-        });
-      },
-
-      createTerminal: async (projectId) => {
-        // Prevent concurrent creation (race condition on mobile rapid taps)
-        if (get()._isCreating) {
-          log.info('Terminal creation already in-flight, skipping');
-          return null;
-        }
-        set({ _isCreating: true });
-
-        get()._attachListeners();
-        const socket = getSocket();
-        await waitForConnection(socket);
-
-        return new Promise((resolve) => {
-          log.info({ projectId }, 'Creating terminal');
-
-          // Timeout guard — if ack never arrives, reset _isCreating
-          const timeout = setTimeout(() => {
-            log.error('Terminal create timed out (no ack after 8s)');
-            set({ _isCreating: false });
-            resolve(null);
-          }, 8000);
-
-          socket.emit(
-            'terminal:create',
-            { projectId: projectId || undefined },
-            (result: { success: boolean; terminalId?: string; error?: string }) => {
-              clearTimeout(timeout);
-              log.info({ result }, 'terminal:create ack received');
-              set({ _isCreating: false });
-              if (result.success && result.terminalId) {
-                const tabNumber = nextAvailableTabNumber(get().tabs);
-                const tab: TerminalTab = {
-                  id: result.terminalId,
-                  projectId: projectId || 'global',
-                  title: `Terminal ${tabNumber}`,
-                  createdAt: Date.now(),
-                  isConnected: true,
-                };
-                set((s) => ({
-                  tabs: [...s.tabs, tab],
-                  activeTabId: result.terminalId!,
-                  isOpen: true,
-                }));
-                resolve(result.terminalId);
-              } else {
-                log.error({ error: result.error }, 'Failed to create terminal');
-                resolve(null);
-              }
-            }
-          );
-        });
-      },
-
-      closeTerminal: (terminalId) => {
-        const socket = getSocket();
-        socket.emit('terminal:close', { terminalId });
-        const { tabs, activeTabId, selectionMode, _terminalActions } = get();
-        const newTabs = tabs.filter((t) => t.id !== terminalId);
-        const newActiveId =
-          activeTabId === terminalId
-            ? newTabs.length > 0
-              ? newTabs[newTabs.length - 1].id
-              : null
-            : activeTabId;
-        const newSelectionMode = { ...selectionMode };
-        delete newSelectionMode[terminalId];
-        const newActions = { ..._terminalActions };
-        delete newActions[terminalId];
-        set({ tabs: newTabs, activeTabId: newActiveId, selectionMode: newSelectionMode, _terminalActions: newActions });
-      },
+      closeTerminal: (terminalId) => closeTerminalAction(terminalId, set, get),
 
       setActiveTab: (terminalId) => set({ activeTabId: terminalId }),
 
-      sendInput: (terminalId, data) => {
-        getSocket().emit('terminal:input', { terminalId, data });
-      },
+      sendInput: (terminalId, data) => getSocket().emit('terminal:input', { terminalId, data }),
 
-      sendResize: (terminalId, cols, rows) => {
-        getSocket().emit('terminal:resize', { terminalId, cols, rows });
-      },
+      sendResize: (terminalId, cols, rows) =>
+        getSocket().emit('terminal:resize', { terminalId, cols, rows }),
 
       renameTerminal: (terminalId, title) => {
         const trimmed = title.trim();
         if (!trimmed) return;
         set((s) => ({
-          tabs: s.tabs.map((t) =>
-            t.id === terminalId ? { ...t, title: trimmed } : t
-          ),
+          tabs: s.tabs.map((t) => t.id === terminalId ? { ...t, title: trimmed } : t),
         }));
       },
 
       closeAllTerminals: () => {
         const socket = getSocket();
-        const { tabs } = get();
-        tabs.forEach((t) => socket.emit('terminal:close', { terminalId: t.id }));
+        get().tabs.forEach((t) => socket.emit('terminal:close', { terminalId: t.id }));
         set({ tabs: [], activeTabId: null });
       },
 
-      setSelectionMode: (id, active) => {
-        set((s) => ({ selectionMode: { ...s.selectionMode, [id]: active } }));
-      },
+      setSelectionMode: (id, active) =>
+        set((s) => ({ selectionMode: { ...s.selectionMode, [id]: active } })),
 
-      registerTerminalActions: (id, actions) => {
-        set((s) => ({ _terminalActions: { ...s._terminalActions, [id]: actions } }));
-      },
+      registerTerminalActions: (id, actions) =>
+        set((s) => ({ _terminalActions: { ...s._terminalActions, [id]: actions } })),
 
-      unregisterTerminalActions: (id) => {
+      unregisterTerminalActions: (id) =>
         set((s) => {
           const next = { ...s._terminalActions };
           delete next[id];
           return { _terminalActions: next };
-        });
-      },
+        }),
 
       copySelection: (id) => get()._terminalActions[id]?.copySelection(),
       selectAll: (id) => get()._terminalActions[id]?.selectAll(),
