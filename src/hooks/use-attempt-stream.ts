@@ -6,6 +6,7 @@ import type { ClaudeOutput } from '@/types';
 import { useRunningTasksStore } from '@/stores/running-tasks-store';
 import { useAttemptSocket } from '@/hooks/use-attempt-socket';
 import { useAttemptQuestions, type Question, type ActiveQuestion } from '@/hooks/use-attempt-questions';
+import { useCheckRunningAttempt, useInterruptAndSend } from '@/hooks/use-attempt-stream-running-attempt-utils';
 
 export type { Question, QuestionOption, ActiveQuestion } from '@/hooks/use-attempt-questions';
 
@@ -103,54 +104,6 @@ export function useAttemptStream(
     }
   }, [isConnected, currentAttemptId]);
 
-  // Check for running attempt on mount/taskId change
-  useEffect(() => {
-    if (!taskId) return;
-    const abortController = new AbortController();
-    const checkRunningAttempt = async () => {
-      try {
-        console.log('[checkRunningAttempt] Checking for running attempt, taskId:', taskId);
-        const res = await fetch(`/api/tasks/${taskId}/running-attempt`, { cache: 'no-store', signal: abortController.signal });
-        if (!res.ok) {
-          console.log('[checkRunningAttempt] No running attempt (HTTP', res.status, ')');
-          return;
-        }
-        const data = await res.json();
-        if (abortController.signal.aborted) return;
-        console.log('[checkRunningAttempt] Response:', { attemptId: data.attempt?.id, status: data.attempt?.status, messageCount: data.messages?.length });
-        if (data.attempt && data.attempt.status === 'running') {
-          currentTaskIdRef.current = taskId;
-          currentAttemptIdRef.current = data.attempt.id;
-          setCurrentAttemptId(data.attempt.id);
-          setCurrentPrompt(data.attempt.prompt);
-          const loadedMessages = (data.messages || []).map((m: any) => ({
-            ...m,
-            _attemptId: data.attempt.id,
-            _msgId: Math.random().toString(36)
-          }));
-          setMessages(loadedMessages);
-          setIsRunning(true);
-          addRunningTask(taskId);
-
-          if (socketRef.current?.connected) {
-            socketRef.current.emit('attempt:subscribe', { attemptId: data.attempt.id });
-          }
-
-          console.log('[checkRunningAttempt] Fetching pending question for attempt:', data.attempt.id);
-          await fetchPendingQuestion(data.attempt.id, abortController.signal);
-        } else {
-          currentTaskIdRef.current = taskId;
-          await fetchPersistentQuestion(taskId, abortController.signal);
-        }
-      } catch (err) {
-        if ((err as Error)?.name === 'AbortError') return;
-        currentTaskIdRef.current = taskId;
-      }
-    };
-    checkRunningAttempt();
-    return () => abortController.abort();
-  }, [taskId, fetchPendingQuestion]);
-
   const startAttempt = useCallback((taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string) => {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
@@ -167,6 +120,20 @@ export function useAttemptStream(
     socket.emit('attempt:start', { taskId, prompt, displayPrompt, fileIds, model });
   }, [isConnected]);
 
+  // Check for running attempt on mount/taskId change
+  useCheckRunningAttempt({
+    taskId,
+    socketRef,
+    currentAttemptIdRef,
+    currentTaskIdRef,
+    setCurrentAttemptId,
+    setCurrentPrompt,
+    setMessages,
+    setIsRunning,
+    fetchPendingQuestion,
+    fetchPersistentQuestion,
+  });
+
   const cancelAttempt = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !currentAttemptId) return;
@@ -177,39 +144,15 @@ export function useAttemptStream(
   }, [currentAttemptId]);
 
   // Interrupt current streaming and send a new message
-  const interruptAndSend = useCallback(async (
-    taskId: string, prompt: string, displayPrompt?: string,
-    fileIds?: string[], model?: string
-  ) => {
-    const socket = socketRef.current;
-    if (!socket || !isConnected) return;
-
-    const attemptToCancel = currentAttemptIdRef.current;
-
-    if (attemptToCancel) {
-      await new Promise<void>((resolve) => {
-        const handler = (data: { attemptId: string }) => {
-          if (data.attemptId === attemptToCancel) {
-            clearTimeout(timeout);
-            socket.off('attempt:finished', handler);
-            resolve();
-          }
-        };
-        const timeout = setTimeout(() => {
-          socket.off('attempt:finished', handler);
-          resolve();
-        }, 3000);
-        socket.on('attempt:finished', handler);
-        socket.emit('attempt:cancel', { attemptId: attemptToCancel });
-      });
-    }
-
-    setIsRunning(false);
-    setActiveQuestion(null);
-    if (currentTaskIdRef.current) removeRunningTask(currentTaskIdRef.current);
-
-    startAttempt(taskId, prompt, displayPrompt, fileIds, model);
-  }, [isConnected, startAttempt]);
+  const { interruptAndSend } = useInterruptAndSend({
+    isConnected,
+    socketRef,
+    currentAttemptIdRef,
+    currentTaskIdRef,
+    setIsRunning,
+    setActiveQuestion,
+    startAttempt,
+  });
 
   return { messages, isConnected, startAttempt, cancelAttempt, interruptAndSend, currentAttemptId, currentPrompt, isRunning, activeQuestion, answerQuestion, cancelQuestion, refetchQuestion };
 }

@@ -6,12 +6,12 @@
  * Connects the inline edit store to Socket.io events for real-time streaming.
  */
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { getSocket } from '@/lib/socket-service';
 import { useInlineEditStore, type CodeSelection } from '@/stores/inline-edit-store';
 import { nanoid } from 'nanoid';
-import type { DiffResult } from '@/lib/diff-generator';
 import { createLogger } from '@/lib/logger';
+import { useInlineEditSocketEventHandlers } from '@/hooks/use-inline-edit-socket-event-handlers';
 
 const log = createLogger('InlineEditHook');
 
@@ -65,44 +65,13 @@ export function useInlineEdit(options: UseInlineEditOptions): UseInlineEditResul
   } = useInlineEditStore();
 
   // Set up socket event handlers
-  useEffect(() => {
-    const socket = getSocket();
-    log.debug({ filePath, socketId: socket.id }, 'Setting up handlers');
-
-    const handleDelta = (data: { sessionId: string; chunk: string }) => {
-      log.debug({ sessionId: data.sessionId, expected: sessionIdRef.current }, 'Received delta');
-      if (data.sessionId === sessionIdRef.current) {
-        appendGeneratedCode(filePath, data.chunk);
-      }
-    };
-
-    const handleComplete = (data: { sessionId: string; code: string; diff: DiffResult }) => {
-      log.debug({ sessionId: data.sessionId, expected: sessionIdRef.current }, 'Received complete');
-      if (data.sessionId === sessionIdRef.current) {
-        log.debug('Calling completeGeneration');
-        completeGeneration(filePath, data.code, data.diff);
-      }
-    };
-
-    const handleError = (data: { sessionId: string; error: string }) => {
-      log.debug({ sessionId: data.sessionId, expected: sessionIdRef.current, error: data.error }, 'Received error');
-      if (data.sessionId === sessionIdRef.current) {
-        setError(filePath, data.error);
-      }
-    };
-
-    socket.on('inline-edit:delta', handleDelta);
-    socket.on('inline-edit:complete', handleComplete);
-    socket.on('inline-edit:error', handleError);
-    log.debug({ listenersCount: socket.listeners('inline-edit:complete').length }, 'Handlers registered');
-
-    return () => {
-      log.debug({ filePath }, 'Removing handlers');
-      socket.off('inline-edit:delta', handleDelta);
-      socket.off('inline-edit:complete', handleComplete);
-      socket.off('inline-edit:error', handleError);
-    };
-  }, [filePath, appendGeneratedCode, completeGeneration, setError]);
+  useInlineEditSocketEventHandlers({
+    filePath,
+    sessionIdRef,
+    appendGeneratedCode,
+    completeGeneration,
+    setError,
+  });
 
   // Start an edit session
   const startEdit = useCallback(

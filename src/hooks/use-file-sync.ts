@@ -7,9 +7,8 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { createLogger } from '@/lib/logger';
-
-const log = createLogger('FileSyncHook');
+import { useFileSyncRemoteFetch } from '@/hooks/use-file-sync-remote-fetch-utils';
+import { useFileSyncCheckNow, useFileSyncPolling } from '@/hooks/use-file-sync-change-check-and-polling';
 
 export interface FileSyncState {
   /** Whether a sync conflict is detected */
@@ -87,143 +86,25 @@ export function useFileSync({
     lastKnownRemoteRef.current = originalContent;
   }, [originalContent]);
 
-  // Fetch remote metadata from disk (lightweight check - only mtime)
-  const fetchRemoteMetadata = useCallback(async (): Promise<{ mtime: number | null } | null> => {
-    if (!filePath || !basePath) return null;
+  // Remote fetch helpers (metadata-only and full content)
+  const { fetchRemoteMetadata, fetchRemoteContent } = useFileSyncRemoteFetch(filePath, basePath);
 
-    try {
-      const res = await fetch(
-        `/api/files/metadata?basePath=${encodeURIComponent(basePath)}&path=${encodeURIComponent(filePath)}`
-      );
-
-      if (!res.ok) return null;
-
-      const data = await res.json();
-      return { mtime: data.mtime ?? null };
-    } catch (error) {
-      log.error({ error, filePath }, 'Error fetching remote metadata');
-      return null;
-    }
-  }, [filePath, basePath]);
-
-  // Fetch remote content from disk
-  const fetchRemoteContent = useCallback(async (): Promise<{ content: string | null; mtime: number | null }> => {
-    if (!filePath || !basePath) return { content: null, mtime: null };
-
-    try {
-      const res = await fetch(
-        `/api/files/content?basePath=${encodeURIComponent(basePath)}&path=${encodeURIComponent(filePath)}`
-      );
-
-      if (!res.ok) return { content: null, mtime: null };
-
-      const data = await res.json();
-      if (data.isBinary || data.content === null) return { content: null, mtime: data.mtime ?? null };
-
-      return { content: data.content, mtime: data.mtime ?? null };
-    } catch (error) {
-      log.error({ error, filePath }, 'Error fetching remote content');
-      return { content: null, mtime: null };
-    }
-  }, [filePath, basePath]);
-
-  // Check for remote changes
-  const checkNow = useCallback(async () => {
-    if (!filePath || !basePath || !enabled) return;
-
-    // Guard against concurrent checks
-    if (isCheckingRef.current) {
-      log.debug({ filePath }, 'Check already in progress, skipping');
-      return;
-    }
-
-    isCheckingRef.current = true;
-    setState(prev => ({ ...prev, isPolling: true }));
-
-    try {
-      // Step 1: Lightweight metadata check (only mtime)
-      const metadata = await fetchRemoteMetadata();
-
-      if (!metadata || metadata.mtime === null) {
-        setState(prev => ({ ...prev, isPolling: false }));
-        isCheckingRef.current = false;
-        return;
-      }
-
-      const now = Date.now();
-
-      // Step 2: Compare mtime with last known
-      const lastMtime = lastKnownMtimeRef.current;
-
-      // If mtime hasn't changed, no need to fetch content
-      if (lastMtime && metadata.mtime === lastMtime) {
-        setState(prev => ({ ...prev, isPolling: false }));
-        isCheckingRef.current = false;
-        return;
-      }
-
-      // Step 3: mtime changed - fetch full content
-      const result = await fetchRemoteContent();
-
-      if (result.content === null) {
-        setState(prev => ({ ...prev, isPolling: false }));
-        isCheckingRef.current = false;
-        return;
-      }
-
-      const { content: remoteContent, mtime } = result;
-
-      // Update last known mtime
-      lastKnownMtimeRef.current = mtime ?? null;
-
-      // Compare remote content with last known remote
-      const lastKnownRemote = lastKnownRemoteRef.current ?? originalContentRef.current;
-      const remoteHasChanged = remoteContent !== lastKnownRemote;
-      const localHasChanged = currentContentRef.current !== originalContentRef.current;
-
-      if (remoteHasChanged) {
-        // Update last known remote
-        lastKnownRemoteRef.current = remoteContent;
-
-        if (localHasChanged) {
-          // Conflict: both local and remote changed - show diff resolver
-          log.debug({ filePath }, 'Conflict detected - remote and local both changed');
-          setState({
-            hasConflict: true,
-            remoteContent,
-            lastSyncedAt: now,
-            isPolling: false,
-            lastKnownMtime: mtime,
-          });
-          onRemoteChange?.(remoteContent);
-        } else {
-          // No local changes - silently update the editor content
-          log.debug({ filePath }, 'Remote changed, no local changes - auto-updating');
-          setState({
-            hasConflict: false,
-            remoteContent: null,
-            lastSyncedAt: now,
-            isPolling: false,
-            lastKnownMtime: mtime,
-          });
-          onSilentUpdate?.(remoteContent);
-        }
-      } else {
-        // No remote changes
-        setState(prev => ({
-          ...prev,
-          lastSyncedAt: now,
-          isPolling: false,
-          lastKnownMtime: mtime,
-        }));
-      }
-      isCheckingRef.current = false;
-    } catch (error) {
-      log.error({ error, filePath }, 'Check failed');
-      setState(prev => ({ ...prev, isPolling: false }));
-      isCheckingRef.current = false;
-    }
-  }, [filePath, basePath, enabled, fetchRemoteMetadata, fetchRemoteContent, onRemoteChange, onSilentUpdate]);
+  // Single sync-cycle callback
+  const checkNow = useFileSyncCheckNow({
+    filePath,
+    basePath,
+    enabled,
+    isCheckingRef,
+    lastKnownMtimeRef,
+    lastKnownRemoteRef,
+    currentContentRef,
+    originalContentRef,
+    fetchRemoteMetadata,
+    fetchRemoteContent,
+    setState,
+    onRemoteChange,
+    onSilentUpdate,
+  });
 
   // Clear conflict state
   const clearConflict = useCallback(() => {
@@ -265,43 +146,11 @@ export function useFileSync({
     isCheckingRef.current = false; // Reset check guard for new file
   }, [filePath]);
 
-  // Set up polling interval
-  // Use ref to avoid re-creating interval when checkNow changes
+  // Recurring polling loop — uses a stable ref to avoid recreating on checkNow changes
   const checkNowRef = useRef(checkNow);
   checkNowRef.current = checkNow;
 
-  useEffect(() => {
-    if (!enabled || !filePath || !basePath) return;
-
-    // Use stable ref to avoid recreating interval
-    const stableCheck = async () => {
-      await checkNowRef.current();
-    };
-
-    // First check after delay, then interval
-    // Using setTimeout loop to avoid duplicate intervals
-    let timeoutId: NodeJS.Timeout | null = null;
-
-    const scheduleNext = () => {
-      timeoutId = setTimeout(() => {
-        stableCheck().then(() => {
-          scheduleNext(); // Schedule next check
-        });
-      }, pollInterval);
-    };
-
-    // Initial check
-    const initialTimer = setTimeout(() => {
-      stableCheck().then(() => {
-        scheduleNext();
-      });
-    }, 1000); // 1 second initial delay
-
-    return () => {
-      clearTimeout(initialTimer);
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [enabled, filePath, basePath, pollInterval]);
+  useFileSyncPolling({ enabled, filePath, basePath, pollInterval, checkNowRef });
 
   return {
     ...state,
