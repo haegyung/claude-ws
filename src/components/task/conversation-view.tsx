@@ -1,26 +1,21 @@
 'use client';
 
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { Loader2, FileText } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { MessageBlock } from '@/components/claude/message-block';
-import { ToolUseBlock } from '@/components/claude/tool-use-block';
 import { RunningDots, useRandomStatusVerb } from '@/components/ui/running-dots';
 import { PendingQuestionIndicator } from '@/components/task/pending-question-indicator';
 import { AuthErrorMessage } from '@/components/auth/auth-error-message';
 import { cn } from '@/lib/utils';
-import type { ClaudeOutput, ClaudeContentBlock, PendingFile } from '@/types';
+import type { ClaudeOutput, PendingFile } from '@/types';
 import { useTranslations } from 'next-intl';
-import {
-  buildToolResultsMap,
-  hasVisibleContent,
-  findAuthError,
-  findLastToolUseId,
-  isToolExecuting,
-  isImageMimeType,
-  formatTimestamp,
-} from '@/components/task/conversation-view-utils';
-import type { ActiveQuestion, ConversationTurn, ToolResult } from '@/components/task/conversation-view-utils';
+import { buildToolResultsMap, hasVisibleContent, findAuthError, findLastToolUseId } from './conversation-view-utils';
+import type { ActiveQuestion, ConversationTurn } from './conversation-view-utils';
+import { useConversationAutoScroll } from './use-conversation-auto-scroll';
+import { renderMessage } from './conversation-view-content-block-renderer';
+import { ConversationHistoricalUserTurn } from './conversation-view-historical-user-turn';
+import { ConversationHistoricalAssistantTurn } from './conversation-view-historical-assistant-turn';
+import { ConversationViewStreamingPromptBubble } from './conversation-view-streaming-prompt-bubble';
 
 interface ConversationViewProps {
   taskId: string;
@@ -33,7 +28,6 @@ interface ConversationViewProps {
   onOpenQuestion?: () => void;
   className?: string;
   onHistoryLoaded?: (hasHistory: boolean) => void;
-  // Refs from parent to track fetching state across remounts
   lastFetchedTaskIdRef?: React.RefObject<string | null>;
   isFetchingRef?: React.RefObject<boolean>;
 }
@@ -56,128 +50,23 @@ export function ConversationView({
   const [isLoading, setIsLoading] = useState(true);
   const statusVerb = useRandomStatusVerb();
   const t = useTranslations('chat');
-  // Use parent refs if provided, otherwise use local refs (fallback for backward compatibility)
+
   const localLastFetchedTaskIdRef = useRef<string | null>(null);
   const localIsFetchingRef = useRef(false);
   const effectiveLastFetchedRef = lastFetchedTaskIdRef || localLastFetchedTaskIdRef;
   const effectiveIsFetchingRef = isFetchingRef || localIsFetchingRef;
 
-  // Pre-compute tool results map and last tool ID for current messages (streaming)
-  // Memoized to avoid O(n²) complexity on every render
   // MUST be called before any early returns per React Rules of Hooks
-  const currentToolResultsMap = useMemo(
-    () => buildToolResultsMap(currentMessages),
-    [currentMessages]
-  );
-  const currentLastToolUseId = useMemo(
-    () => findLastToolUseId(currentMessages),
-    [currentMessages]
-  );
+  const currentToolResultsMap = useMemo(() => buildToolResultsMap(currentMessages), [currentMessages]);
+  const currentLastToolUseId = useMemo(() => findLastToolUseId(currentMessages), [currentMessages]);
 
+  useConversationAutoScroll(scrollAreaRef, currentMessages, historicalTurns, isRunning, isLoading);
 
-  // Auto-scroll: check if near bottom (within 5px)
-  const isNearBottom = () => {
-    const detachedContainer = scrollAreaRef.current?.closest('[data-detached-scroll-container]');
-    if (detachedContainer) {
-      return detachedContainer.scrollHeight - detachedContainer.scrollTop - detachedContainer.clientHeight < 5;
-    }
-    const viewport = scrollAreaRef.current?.querySelector('[data-slot="scroll-area-viewport"]');
-    if (!viewport) return true;
-    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 5;
-  };
-
-  // Auto-scroll: scroll to bottom
-  const scrollToBottom = () => {
-    const detachedContainer = scrollAreaRef.current?.closest('[data-detached-scroll-container]');
-    if (detachedContainer) {
-      detachedContainer.scrollTop = detachedContainer.scrollHeight;
-    } else {
-      const viewport = scrollAreaRef.current?.querySelector('[data-slot="scroll-area-viewport"]');
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
-      }
-    }
-  };
-
-  // Auto-scroll: when new content arrives, scroll if was near bottom
-  useEffect(() => {
-    if (isNearBottom()) {
-      scrollToBottom();
-    }
-  }, [currentMessages, historicalTurns]);
-
-  // Auto-scroll: always scroll to bottom when a new attempt starts
-  useEffect(() => {
-    if (isRunning) {
-      scrollToBottom();
-    }
-  }, [isRunning]);
-
-  // Auto-scroll: during streaming, use sticky-to-bottom pattern
-  // When user scrolls up, stop auto-scrolling. Resume only when they scroll back to bottom.
-  useEffect(() => {
-    if (!isRunning) return;
-
-    const contentContainer = scrollAreaRef.current;
-    if (!contentContainer) return;
-
-    // Start stuck to bottom
-    let isStuckToBottom = true;
-
-    const observer = new MutationObserver(() => {
-      if (isStuckToBottom) {
-        scrollToBottom();
-      }
-    });
-
-    observer.observe(contentContainer, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-
-    // Track user scroll: unstick when scrolling up, re-stick when at bottom
-    let lastScrollTop = 0;
-    const handleScroll = (e: Event) => {
-      const target = e.target as HTMLElement;
-      const currentScrollTop = target.scrollTop;
-      const atBottom = target.scrollHeight - currentScrollTop - target.clientHeight < 50;
-
-      if (atBottom) {
-        // User scrolled back to bottom — re-stick
-        isStuckToBottom = true;
-      } else if (currentScrollTop < lastScrollTop) {
-        // User scrolled up — unstick
-        isStuckToBottom = false;
-      }
-      lastScrollTop = currentScrollTop;
-    };
-
-    const detachedContainer = contentContainer.closest('[data-detached-scroll-container]');
-    const viewport = detachedContainer || contentContainer.querySelector('[data-slot="scroll-area-viewport"]');
-    viewport?.addEventListener('scroll', handleScroll, { passive: true });
-
-    return () => {
-      observer.disconnect();
-      viewport?.removeEventListener('scroll', handleScroll);
-    };
-  }, [isRunning]);
-
-
-  // Load historical conversation
   const loadHistory = async (forceRefresh = false) => {
-    // Prevent duplicate fetches for the same task ID (unless force refresh)
-    if (!forceRefresh && effectiveLastFetchedRef.current === taskId) {
-      return;
-    }
-
-    if (!forceRefresh && effectiveIsFetchingRef.current) {
-      return;
-    }
-
+    if (!forceRefresh && effectiveLastFetchedRef.current === taskId) return;
+    if (!forceRefresh && effectiveIsFetchingRef.current) return;
     effectiveLastFetchedRef.current = taskId;
     effectiveIsFetchingRef.current = true;
-
     try {
       if (!forceRefresh) setIsLoading(true);
       const response = await fetch(`/api/tasks/${taskId}/conversation`);
@@ -193,227 +82,21 @@ export function ConversationView({
     }
   };
 
-  useEffect(() => {
-    loadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  useEffect(() => { loadHistory(); }, [taskId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reload history when an attempt finishes (to show cancelled/completed status)
-  // We track the previous running state to detect when it transitions from running to not running
   const prevIsRunningRef = useRef(isRunning);
   useEffect(() => {
     const wasRunning = prevIsRunningRef.current;
     prevIsRunningRef.current = isRunning;
+    if (wasRunning && !isRunning) loadHistory();
+  }, [isRunning]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // If we just transitioned from running to not running, reload history
-    // This ensures cancelled attempts appear with their status
-    if (wasRunning && !isRunning) {
-      loadHistory();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning]);
-
-  // Reload history when a new attempt starts (currentAttemptId changes)
-  // This ensures previous turns are loaded from DB before the new attempt streams
   const prevAttemptIdRef = useRef(currentAttemptId);
   useEffect(() => {
     const prevId = prevAttemptIdRef.current;
     prevAttemptIdRef.current = currentAttemptId;
-
-    // If attemptId changed and we have a new one, reload history to pick up previous turns
-    if (currentAttemptId && prevId && currentAttemptId !== prevId) {
-      loadHistory(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentAttemptId]);
-
-  // Auto-scroll to bottom after history is loaded (when opening a task)
-  useEffect(() => {
-    if (!isLoading) {
-      scrollToBottom();
-    }
-  }, [isLoading]);
-
-  // Removed continuous RAF loop which caused performance issues when switching tabs
-
-  const renderContentBlock = (
-    block: ClaudeContentBlock,
-    index: number,
-    lastToolUseId: string | null,
-    toolResultsMap: Map<string, ToolResult>,
-    isStreaming: boolean,
-    allBlocks?: ClaudeContentBlock[]
-  ) => {
-    if (block.type === 'text' && block.text) {
-      return <MessageBlock key={index} content={block.text} isStreaming={isStreaming} />;
-    }
-
-    if (block.type === 'thinking' && block.thinking) {
-      // Thinking spinner should stop once a tool_use or text block appears after it
-      const hasLaterBlocks = allBlocks ? allBlocks.slice(index + 1).some(
-        b => b.type === 'tool_use' || (b.type === 'text' && b.text)
-      ) : false;
-      const isThinkingActive = isStreaming && !hasLaterBlocks;
-      return <MessageBlock key={index} content={block.thinking} isThinking isStreaming={isThinkingActive} />;
-    }
-
-    if (block.type === 'tool_use') {
-      const toolId = block.id || '';
-      const toolResult = toolResultsMap.get(toolId);
-      const executing = isToolExecuting(toolId, lastToolUseId, toolResultsMap, isStreaming);
-
-      return (
-        <ToolUseBlock
-          key={toolId || index}
-          name={block.name || 'Unknown'}
-          input={block.input}
-          result={toolResult?.result}
-          isError={toolResult?.isError}
-          isStreaming={executing}
-          onOpenPanel={block.name === 'AskUserQuestion' ? onOpenQuestion : undefined}
-        />
-      );
-    }
-
-    return null;
-  };
-
-  const renderMessage = (
-    output: ClaudeOutput,
-    index: number,
-    isStreaming: boolean,
-    toolResultsMap: Map<string, ToolResult>,
-    lastToolUseId: string | null
-  ) => {
-    // Handle assistant messages - render ALL content blocks in order (text, thinking, tool_use)
-    // This preserves the natural order of Claude's response
-    if (output.type === 'assistant' && output.message?.content) {
-      const blocks = output.message.content;
-
-      return (
-        <div key={(output as any)._msgId || index} className="space-y-1 w-full max-w-full overflow-hidden">
-          {blocks.map((block, blockIndex) =>
-            renderContentBlock(block, blockIndex, lastToolUseId, toolResultsMap, isStreaming, blocks)
-          )}
-        </div>
-      );
-    }
-
-    // Handle top-level tool_use messages (for CLIs that send tool use as separate JSON objects)
-    if (output.type === 'tool_use') {
-      const toolId = output.id || '';
-      const toolResult = toolResultsMap.get(toolId);
-      const isExecuting = isToolExecuting(toolId, lastToolUseId, toolResultsMap, isStreaming);
-
-      return (
-        <ToolUseBlock
-          key={(output as any)._msgId || toolId || index}
-          name={output.tool_name || 'Unknown'}
-          input={output.tool_data}
-          result={toolResult?.result}
-          isError={toolResult?.isError}
-          isStreaming={isExecuting}
-          onOpenPanel={output.tool_name === 'AskUserQuestion' ? onOpenQuestion : undefined}
-        />
-      );
-    }
-
-    // Skip tool_result, stream_event, user (tool results are matched via toolResultsMap)
-    if (output.type === 'tool_result' || output.type === 'stream_event' || output.type === 'user') {
-      return null;
-    }
-
-    return null;
-  };
-
-  // User prompt - simple muted box with file thumbnails
-  const renderUserTurn = (turn: ConversationTurn) => {
-    const isCancelled = turn.attemptStatus === 'cancelled';
-
-    // Debug logging
-    if (isCancelled) {
-      console.log('[ConversationView] Rendering cancelled user turn:', turn.attemptId, turn.attemptStatus);
-    }
-
-    return (
-      <div key={`user-${turn.attemptId}`} className="flex flex-col items-end w-full max-w-full gap-1">
-        <div className="bg-primary/10 rounded-lg px-4 py-3 text-[15px] leading-relaxed break-words space-y-3 max-w-[85%] overflow-hidden">
-          <div className="whitespace-pre-wrap">{turn.prompt}</div>
-        {turn.files && turn.files.length > 0 && (
-          <div className="flex flex-wrap gap-2 pt-1">
-            {turn.files.map((file) => (
-              isImageMimeType(file.mimeType) ? (
-                <a
-                  key={file.id}
-                  href={`/api/uploads/${file.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block"
-                >
-                  <img
-                    src={`/api/uploads/${file.id}`}
-                    alt={file.originalName}
-                    className="h-16 w-auto rounded border border-border hover:border-primary transition-colors"
-                    title={file.originalName}
-                  />
-                </a>
-              ) : (
-                <a
-                  key={file.id}
-                  href={`/api/uploads/${file.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 px-2 py-1 bg-background rounded border border-border hover:border-primary transition-colors text-xs"
-                  title={file.originalName}
-                >
-                  <FileText className="size-3" />
-                  <span className="max-w-[100px] truncate">{file.originalName}</span>
-                </a>
-              )
-            ))}
-          </div>
-        )}
-        <div className="flex justify-between items-center">
-          <span className="text-xs text-muted-foreground">{formatTimestamp(turn.timestamp)}</span>
-          {isCancelled && (
-            <span className="text-xs text-muted-foreground italic ml-2">{t('cancelled')}</span>
-          )}
-        </div>
-      </div>
-    </div>
-    );
-  };
-
-  // Assistant response - clean text flow
-  // Pre-compute maps once per turn to avoid O(n²) complexity
-  const renderAssistantTurn = (turn: ConversationTurn) => {
-    const toolResultsMap = buildToolResultsMap(turn.messages);
-    const lastToolUseId = findLastToolUseId(turn.messages);
-    const isCancelled = turn.attemptStatus === 'cancelled';
-
-    // Debug logging
-    if (isCancelled) {
-      console.log('[ConversationView] Rendering cancelled assistant turn:', turn.attemptId, turn.attemptStatus, 'messages:', turn.messages.length);
-    }
-
-    return (
-      <div key={`assistant-${turn.attemptId}`} className="space-y-4 w-full max-w-full overflow-hidden">
-        {turn.messages.map((msg, idx) => renderMessage(msg, idx, false, toolResultsMap, lastToolUseId))}
-        <div className="flex justify-end">
-          {isCancelled && (
-            <span className="text-xs text-muted-foreground italic">{t('cancelled')}</span>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderTurn = (turn: ConversationTurn) => {
-    if (turn.type === 'user') {
-      return renderUserTurn(turn);
-    }
-    return renderAssistantTurn(turn);
-  };
+    if (currentAttemptId && prevId && currentAttemptId !== prevId) loadHistory(true);
+  }, [currentAttemptId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) {
     return (
@@ -423,11 +106,7 @@ export function ConversationView({
     );
   }
 
-  // Check empty state
-  const hasHistory = historicalTurns.length > 0;
-  const hasCurrentMessages = currentMessages.length > 0;
-  const isEmpty = !hasHistory && !hasCurrentMessages && !isRunning;
-
+  const isEmpty = !historicalTurns.length && !currentMessages.length && !isRunning;
   if (isEmpty) {
     return (
       <div className={cn('flex flex-col items-center justify-center h-full text-muted-foreground', className)}>
@@ -437,88 +116,49 @@ export function ConversationView({
     );
   }
 
-  // Filter out currently running attempt from history to avoid duplication
-  // When streaming, current messages should be shown from currentMessages, not history
-  // Only filter when currentMessages has actual content — otherwise the streaming buffer
-  // is empty (e.g. just cleared for a new attempt) and history should remain visible
   const filteredHistoricalTurns = currentAttemptId && isRunning && currentMessages.length > 0
-    ? historicalTurns.filter(t => t.attemptId !== currentAttemptId)
+    ? historicalTurns.filter(turn => turn.attemptId !== currentAttemptId)
     : historicalTurns;
+
+  const streamingVisible = currentAttemptId && (currentMessages.length > 0 || isRunning)
+    && !filteredHistoricalTurns.some(turn => turn.attemptId === currentAttemptId && turn.type === 'assistant');
+  const showStreamingPrompt = streamingVisible
+    && !filteredHistoricalTurns.some(turn => turn.attemptId === currentAttemptId && turn.type === 'user')
+    && !!currentPrompt;
 
   return (
     <ScrollArea ref={scrollAreaRef} className={cn('h-full w-full max-w-full overflow-x-hidden', className)}>
       <div className="space-y-6 p-4 pb-24 w-full max-w-full overflow-x-hidden box-border">
-        {/* Historical turns */}
-        {filteredHistoricalTurns.map(renderTurn)}
+        {filteredHistoricalTurns.map((turn) =>
+          turn.type === 'user'
+            ? <ConversationHistoricalUserTurn key={`user-${turn.attemptId}`} turn={turn} />
+            : <ConversationHistoricalAssistantTurn key={`assistant-${turn.attemptId}`} turn={turn} onOpenQuestion={onOpenQuestion} />
+        )}
 
-        {/* Current streaming messages - only show if not already in filtered history */}
-        {currentAttemptId && (currentMessages.length > 0 || isRunning) &&
-          !filteredHistoricalTurns.some(t => t.attemptId === currentAttemptId && t.type === 'assistant') && (
-            <>
-              {/* User prompt if not in history */}
-              {!filteredHistoricalTurns.some(t => t.attemptId === currentAttemptId && t.type === 'user') && currentPrompt && (
-                <div className="flex justify-end w-full max-w-full">
-                  <div className="bg-primary/10 rounded-lg px-4 py-3 text-[15px] leading-relaxed break-words space-y-3 max-w-[85%] overflow-hidden">
-                    <div className="whitespace-pre-wrap">{currentPrompt}</div>
-                  {currentFiles && currentFiles.length > 0 && (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {currentFiles.map((file) => {
-                        // Use previewUrl (blob URL) for immediate display - it stays valid
-                        // since we don't revoke it until page reload
-                        const imgSrc = file.previewUrl;
-
-                        return isImageMimeType(file.mimeType) ? (
-                          <img
-                            key={file.tempId}
-                            src={imgSrc}
-                            alt={file.originalName}
-                            className="h-16 w-auto rounded border border-border"
-                            title={file.originalName}
-                          />
-                        ) : (
-                          <div
-                            key={file.tempId}
-                            className="flex items-center gap-1 px-2 py-1 bg-background rounded border border-border text-xs"
-                            title={file.originalName}
-                          >
-                            <FileText className="size-3" />
-                            <span className="max-w-[100px] truncate">{file.originalName}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <div className="flex justify-end">
-                    <span className="text-xs text-muted-foreground">{formatTimestamp(Date.now())}</span>
-                  </div>
-                </div>
-                </div>
+        {streamingVisible && (
+          <>
+            {showStreamingPrompt && (
+              <ConversationViewStreamingPromptBubble prompt={currentPrompt!} files={currentFiles} />
+            )}
+            <div className="space-y-4 w-full max-w-full overflow-hidden">
+              {currentMessages.map((msg, idx) =>
+                renderMessage({ output: msg, index: idx, isStreaming: true, toolResultsMap: currentToolResultsMap, lastToolUseId: currentLastToolUseId, onOpenQuestion })
               )}
-              {/* Streaming response */}
-              <div className="space-y-4 w-full max-w-full overflow-hidden">
-                {currentMessages.map((msg, idx) => renderMessage(msg, idx, true, currentToolResultsMap, currentLastToolUseId))}
-              </div>
-
-              {/* Pending question indicator - shown when question is interrupted */}
-              {activeQuestion && onOpenQuestion && (
-                <PendingQuestionIndicator
-                  questions={activeQuestion.questions}
-                  onOpen={onOpenQuestion}
-                />
-              )}
-            </>
-          )}
-
-        {/* Initial loading state - show until actual visible content appears */}
-        {isRunning && !hasVisibleContent(currentMessages) &&
-          !filteredHistoricalTurns.some(t => t.attemptId === currentAttemptId && t.type === 'assistant') && (
-            <div className="flex items-center gap-2 text-muted-foreground text-sm py-1">
-              <RunningDots />
-              <span className="font-mono text-[14px]" style={{ color: '#b9664a' }}>{statusVerb}...</span>
             </div>
-          )}
+            {activeQuestion && onOpenQuestion && (
+              <PendingQuestionIndicator questions={activeQuestion.questions} onOpen={onOpenQuestion} />
+            )}
+          </>
+        )}
 
-        {/* Auth error message - show when provider auth error is detected */}
+        {isRunning && !hasVisibleContent(currentMessages)
+          && !filteredHistoricalTurns.some(turn => turn.attemptId === currentAttemptId && turn.type === 'assistant') && (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-1">
+            <RunningDots />
+            <span className="font-mono text-[14px]" style={{ color: '#b9664a' }}>{statusVerb}...</span>
+          </div>
+        )}
+
         {(() => {
           const authError = findAuthError(currentMessages);
           return authError ? <AuthErrorMessage message={authError} className="mt-4" /> : null;
