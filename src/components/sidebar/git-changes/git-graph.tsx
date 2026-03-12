@@ -1,15 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronRight, ChevronDown, RefreshCw, Loader2, ArrowUpFromLine, ArrowDownToLine, RotateCcw } from 'lucide-react';
-import { useTranslations } from 'next-intl';
-import { GitCommitItem } from './git-commit-item';
-import { GraphRenderer } from './graph-renderer';
+import { Loader2 } from 'lucide-react';
 import { CommitDetailsModal } from './commit-details-modal';
+import { GitGraphCommitRow } from './git-graph-commit-row';
+import { GitGraphToolbarHeader } from './git-graph-toolbar-header';
 import { useActiveProject } from '@/hooks/use-active-project';
-import { cn } from '@/lib/utils';
 import { calculateLanes } from '@/lib/git/lane-calculator';
-import { generatePaths, GRAPH_CONSTANTS } from '@/lib/git/path-generator';
+import { generatePaths } from '@/lib/git/path-generator';
 
 interface GitCommit {
   hash: string;
@@ -24,8 +22,6 @@ interface GitCommit {
 }
 
 export function GitGraph() {
-  const t = useTranslations('git');
-  const tCommon = useTranslations('common');
   const activeProject = useActiveProject();
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [head, setHead] = useState<string>('');
@@ -105,93 +101,18 @@ export function GitGraph() {
 
   return (
     <div className="mb-1">
-      {/* Section header */}
-      <div
-        className={cn(
-          'group flex items-center gap-1 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide',
-          'hover:bg-accent/30 transition-colors rounded-sm cursor-pointer'
-        )}
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        {isExpanded ? (
-          <ChevronDown className="size-4" />
-        ) : (
-          <ChevronRight className="size-4" />
-        )}
-        <span className="flex-1">Graph</span>
-
-        {/* Action buttons */}
-        <div className="flex items-center gap-0.5">
-          {/* Filter toggle */}
-          <button
-            className={cn(
-              'p-0.5 hover:bg-accent rounded',
-              filter === 'current' && 'bg-accent'
-            )}
-            onClick={(e) => {
-              e.stopPropagation();
-              setFilter(filter === 'current' ? 'all' : 'current');
-            }}
-            title={filter === 'current' ? t('showAllBranches') : t('showCurrentBranchOnly')}
-          >
-            <svg className="size-3.5" viewBox="0 0 16 16" fill="currentColor">
-              {filter === 'current' ? (
-                <path d="M8 2a6 6 0 100 12A6 6 0 008 2zm0 1.5a4.5 4.5 0 110 9 4.5 4.5 0 010-9z"/>
-              ) : (
-                <path d="M8 2a6 6 0 100 12A6 6 0 008 2zM3.5 8a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0z"/>
-              )}
-            </svg>
-          </button>
-          {/* Fetch */}
-          <button
-            className="p-0.5 hover:bg-accent rounded"
-            onClick={(e) => {
-              e.stopPropagation();
-              gitAction('fetch');
-            }}
-            disabled={actionLoading !== null}
-            title={t('fetch')}
-          >
-            <ArrowDownToLine className={cn('size-3.5', actionLoading === 'fetch' && 'animate-pulse')} />
-          </button>
-          {/* Pull */}
-          <button
-            className="p-0.5 hover:bg-accent rounded"
-            onClick={(e) => {
-              e.stopPropagation();
-              gitAction('pull');
-            }}
-            disabled={actionLoading !== null}
-            title={t('pull')}
-          >
-            <RotateCcw className={cn('size-3.5', actionLoading === 'pull' && 'animate-spin')} />
-          </button>
-          {/* Push */}
-          <button
-            className="p-0.5 hover:bg-accent rounded"
-            onClick={(e) => {
-              e.stopPropagation();
-              gitAction('push');
-            }}
-            disabled={actionLoading !== null}
-            title={t('push')}
-          >
-            <ArrowUpFromLine className={cn('size-3.5', actionLoading === 'push' && 'animate-pulse')} />
-          </button>
-          {/* Refresh */}
-          <button
-            className="p-0.5 hover:bg-accent rounded"
-            onClick={(e) => {
-              e.stopPropagation();
-              fetchLog();
-            }}
-            title={tCommon('refresh')}
-          >
-            <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
-          </button>
-          {/* More options */}
-        </div>
-      </div>
+      <GitGraphToolbarHeader
+        isExpanded={isExpanded}
+        filter={filter}
+        loading={loading}
+        actionLoading={actionLoading}
+        onToggleExpand={() => setIsExpanded(!isExpanded)}
+        onToggleFilter={() => setFilter(filter === 'current' ? 'all' : 'current')}
+        onFetch={() => gitAction('fetch')}
+        onPull={() => gitAction('pull')}
+        onPush={() => gitAction('push')}
+        onRefresh={fetchLog}
+      />
 
       {/* Commit list */}
       {isExpanded && (
@@ -208,154 +129,24 @@ export function GitGraph() {
             </div>
           ) : graphData ? (
             <div className="space-y-0">
-              {commits.map((commit, index) => {
-                const lane = graphData.lanes[index];
-                const offsetX = 6;
-
-                // Find the rightmost lane in this row
-                let maxLaneInRow = lane.lane;
-
-                // Check ALL commits to see if any line passes through this row
-                commits.forEach((c, idx) => {
-                  c.parents.forEach((parentHash) => {
-                    const parentIndex = commits.findIndex(p => p.hash === parentHash);
-                    if (parentIndex === -1) return;
-
-                    // Check if line from idx to parentIndex passes through current row (index)
-                    const minIdx = Math.min(idx, parentIndex);
-                    const maxIdx = Math.max(idx, parentIndex);
-
-                    if (index >= minIdx && index <= maxIdx) {
-                      // This line passes through current row
-                      const commitLane = graphData.lanes[idx].lane;
-                      const parentLane = graphData.lanes[parentIndex].lane;
-
-                      // Track the highest lane involved
-                      if (commitLane > maxLaneInRow) maxLaneInRow = commitLane;
-                      if (parentLane > maxLaneInRow) maxLaneInRow = parentLane;
-                    }
-                  });
-                });
-
-                // Calculate SVG width based on rightmost lane
-                const svgWidth = maxLaneInRow * GRAPH_CONSTANTS.LANE_WIDTH + offsetX + GRAPH_CONSTANTS.DOT_RADIUS + 4;
-
-                const isHovered = hoveredCommit === commit.hash;
-
-                return (
-                  <div
-                    key={commit.hash}
-                    className={cn(
-                      'flex items-center transition-colors cursor-pointer',
-                      isHovered && 'bg-accent/50'
-                    )}
-                    style={{ minHeight: `${GRAPH_CONSTANTS.ROW_HEIGHT}px` }}
-                    onMouseEnter={() => setHoveredCommit(commit.hash)}
-                    onMouseLeave={() => setHoveredCommit(null)}
-                    onClick={() => {
-                      setSelectedCommit(commit.hash);
-                      setModalOpen(true);
-                    }}
-                  >
-                    {/* Graph - LEFT side, dynamic width */}
-                    <div className="shrink-0 mr-0.5">
-                      <svg
-                        width={svgWidth}
-                        height={GRAPH_CONSTANTS.ROW_HEIGHT}
-                        className="overflow-visible"
-                      >
-                        {/* Render connecting lines */}
-                        {graphData.paths
-                          .filter((path) => {
-                            const rowY = index * GRAPH_CONSTANTS.ROW_HEIGHT + GRAPH_CONSTANTS.ROW_HEIGHT / 2;
-                            return path.d.includes(` ${rowY}`) || path.d.includes(`,${rowY}`);
-                          })
-                          .map((path, pathIdx) => {
-                            let d = path.d;
-                            const offsetX = 6;
-                            const baseY = index * GRAPH_CONSTANTS.ROW_HEIGHT;
-
-                            d = d.replace(/M ([\d.]+) ([\d.]+)/g, (_, x, y) =>
-                              `M ${parseFloat(x) + offsetX} ${parseFloat(y) - baseY}`
-                            );
-                            d = d.replace(/L ([\d.]+) ([\d.]+)/g, (_, x, y) =>
-                              `L ${parseFloat(x) + offsetX} ${parseFloat(y) - baseY}`
-                            );
-                            d = d.replace(/C ([\d.]+) ([\d.]+), ([\d.]+) ([\d.]+), ([\d.]+) ([\d.]+)/g,
-                              (_, x1, y1, x2, y2, x3, y3) =>
-                                `C ${parseFloat(x1) + offsetX} ${parseFloat(y1) - baseY}, ${parseFloat(x2) + offsetX} ${parseFloat(y2) - baseY}, ${parseFloat(x3) + offsetX} ${parseFloat(y3) - baseY}`
-                            );
-
-                            return (
-                              <path
-                                key={`path-${pathIdx}`}
-                                d={d}
-                                stroke={path.color}
-                                strokeWidth={2}
-                                fill="none"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            );
-                          })}
-
-                        {/* Commit dot */}
-                        {(() => {
-                          const offsetX = 6;
-                          const dotX = lane.lane * GRAPH_CONSTANTS.LANE_WIDTH + offsetX;
-                          const dotY = GRAPH_CONSTANTS.ROW_HEIGHT / 2;
-                          const isHighlighted = lane.commitHash === hoveredCommit;
-
-                          return (
-                            <g>
-                              {/* Glow effect on hover */}
-                              {isHighlighted && (
-                                <circle
-                                  cx={dotX}
-                                  cy={dotY}
-                                  r={GRAPH_CONSTANTS.DOT_RADIUS + 3}
-                                  fill={lane.color}
-                                  fillOpacity={0.3}
-                                  className="animate-pulse"
-                                />
-                              )}
-                              {/* Main dot */}
-                              <circle
-                                cx={dotX}
-                                cy={dotY}
-                                r={GRAPH_CONSTANTS.DOT_RADIUS}
-                                fill={lane.color}
-                                stroke={isHighlighted ? '#fff' : 'rgba(0,0,0,0.15)'}
-                                strokeWidth={isHighlighted ? 1.5 : 1}
-                                className="cursor-pointer transition-all"
-                                onClick={() => {
-                                  setSelectedCommit(commit.hash);
-                                  setModalOpen(true);
-                                }}
-                              />
-                            </g>
-                          );
-                        })()}
-                      </svg>
-                    </div>
-
-                    {/* Commit text - RIGHT side, takes remaining space */}
-                    <div className="flex-1 min-w-0">
-                      <GitCommitItem
-                        commit={commit}
-                        isHead={commit.hash === head}
-                        color={lane.color}
-                        isMerge={commit.parents.length > 1}
-                        showLine={false}
-                        onClick={() => {
-                          setSelectedCommit(commit.hash);
-                          setModalOpen(true);
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+              {commits.map((commit, index) => (
+                <GitGraphCommitRow
+                  key={commit.hash}
+                  commit={commit}
+                  index={index}
+                  lane={graphData.lanes[index]}
+                  allCommits={commits}
+                  allLanes={graphData.lanes}
+                  paths={graphData.paths}
+                  head={head}
+                  hoveredCommit={hoveredCommit}
+                  onHover={setHoveredCommit}
+                  onSelect={(hash) => {
+                    setSelectedCommit(hash);
+                    setModalOpen(true);
+                  }}
+                />
+              ))}
             </div>
           ) : null}
         </div>

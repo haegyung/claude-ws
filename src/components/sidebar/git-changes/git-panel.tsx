@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Loader2, RefreshCw, GitBranch, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Plus, Minus, Undo2 } from 'lucide-react';
+import { Loader2, RefreshCw, GitBranch, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Plus, Undo2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { GitGraph } from './git-graph';
-import { GitFileItem } from './git-file-item';
 import { GitCommitForm } from './git-commit-form';
 import { BranchCheckoutModal } from './branch-checkout-modal';
+import { GitPanelStagedUnstagedFileLists } from './git-panel-staged-unstaged-file-lists';
 import { useGitActions } from './use-git-actions';
 import { useActiveProject } from '@/hooks/use-active-project';
 import { useSidebarStore } from '@/stores/sidebar-store';
@@ -21,7 +21,6 @@ export function GitPanel() {
   const { openDiffTab } = useSidebarStore();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [changesExpanded, setChangesExpanded] = useState(true);
-  const [stagedExpanded, setStagedExpanded] = useState(true);
   const [branchModalOpen, setBranchModalOpen] = useState(false);
 
   const {
@@ -165,68 +164,17 @@ export function GitPanel() {
                     <p className="text-xs mt-1">{t('workingTreeClean')}</p>
                   </div>
                 ) : (
-                  <>
-                    {/* Staged changes subsection */}
-                    {(status?.staged.length || 0) > 0 && (
-                      <div className="mb-1">
-                        <div
-                          className={cn(
-                            'group flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-muted-foreground',
-                            'hover:bg-accent/30 transition-colors rounded-sm cursor-pointer'
-                          )}
-                          onClick={() => setStagedExpanded(!stagedExpanded)}
-                        >
-                          {stagedExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-                          <span className="flex-1">{t('staged')}</span>
-                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              className="p-0.5 hover:bg-accent rounded"
-                              onClick={(e) => { e.stopPropagation(); unstageAll(); }}
-                              title={t('unstageAll')}
-                            >
-                              <Minus className="size-3" />
-                            </button>
-                          </div>
-                          <span className="px-1 py-0.5 bg-muted/80 rounded text-[9px] font-semibold">
-                            {t('stagedCount', { count: status?.staged.length || 0 })}
-                          </span>
-                        </div>
-                        {stagedExpanded && (
-                          <div>
-                            {status?.staged.map((file) => (
-                              <GitFileItem
-                                key={file.path}
-                                file={file}
-                                isSelected={selectedFile === file.path}
-                                staged={true}
-                                onClick={() => handleFileClick(file.path, true)}
-                                onUnstage={() => unstageFile(file.path)}
-                                onAddToGitignore={() => addToGitignore(file.path)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Unstaged changes */}
-                    {changes.length > 0 && (
-                      <div>
-                        {changes.map((file) => (
-                          <GitFileItem
-                            key={file.path}
-                            file={file}
-                            isSelected={selectedFile === file.path}
-                            staged={false}
-                            onClick={() => handleFileClick(file.path, false)}
-                            onStage={() => stageFile(file.path)}
-                            onDiscard={() => discardFile(file.path)}
-                            onAddToGitignore={() => addToGitignore(file.path)}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </>
+                  <GitPanelStagedUnstagedFileLists
+                    status={status}
+                    changes={changes}
+                    selectedFile={selectedFile}
+                    onFileClick={handleFileClick}
+                    onStage={stageFile}
+                    onUnstage={unstageFile}
+                    onDiscard={discardFile}
+                    onUnstageAll={unstageAll}
+                    onAddToGitignore={addToGitignore}
+                  />
                 )}
               </div>
             )}
