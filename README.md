@@ -10,7 +10,7 @@
 
 ## Vision
 
-Claude Workspace is evolving from a developer tool into a **full AI-powered business hub**. By integrating [OpenClaw](https://openclaw.ai/) and compatible claw agents, solo founders can manage email, calendar, messaging, sales, support, and operations — all from one workspace alongside their code. See the [Project Roadmap](./docs/project-roadmap.md) for details.
+Claude Workspace is evolving from a developer tool into a **full AI-powered business hub**. By integrating ClaudeWs existing multi-agents, [OpenClaw](https://openclaw.ai/) and compatible claw agents, solo founders can manage email, calendar, messaging, sales, support, and operations — all from one workspace alongside their code. See the [Project Roadmap](./docs/project-roadmap.md) for details.
 
 ---
 
