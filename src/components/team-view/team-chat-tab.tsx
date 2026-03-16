@@ -3,23 +3,9 @@
 import { useEffect, useRef } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
 import type { SubagentNode, AgentMessage } from '@/lib/workflow-tracker';
 import type { WorkflowEntry } from '@/stores/workflow-store';
-
-function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return `${minutes}m ${remainingSeconds}s`;
-}
+import { formatDuration, formatTimestamp } from '@/lib/workflow-format-utils';
 
 interface ChatEvent {
   type: 'message' | 'agent-start' | 'agent-end';

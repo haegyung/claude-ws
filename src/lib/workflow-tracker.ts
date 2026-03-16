@@ -28,6 +28,7 @@ const log = createLogger('WorkflowTracker');
 
 interface WorkflowTrackerEvents {
   'workflow-update': (data: { attemptId: string; workflow: WorkflowState }) => void;
+  'workflow-cleared': (data: { attemptId: string }) => void;
   'subagent-start': (data: { attemptId: string; node: SubagentNode }) => void;
   'subagent-end': (data: { attemptId: string; node: SubagentNode }) => void;
 }
@@ -261,6 +262,7 @@ class WorkflowTracker extends EventEmitter {
   /** Clear workflow for an attempt */
   clearWorkflow(attemptId: string): void {
     this.workflows.delete(attemptId);
+    this.emit('workflow-cleared', { attemptId });
   }
 
   override on<K extends keyof WorkflowTrackerEvents>(

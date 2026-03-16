@@ -28,6 +28,8 @@ export class CLISession implements ProviderSession {
   outputFormat?: string;
   child: ChildProcess;
   activeBackgroundAgents: number = 0;
+  /** Timer ref for background agent wait polling — cleared on cancel */
+  backgroundWaitTimer: ReturnType<typeof setInterval> | null = null;
   private pendingQuestion: PendingQuestion | null = null;
 
   constructor(
@@ -64,6 +66,10 @@ export class CLISession implements ProviderSession {
   }
 
   cancel(): void {
+    if (this.backgroundWaitTimer) {
+      clearInterval(this.backgroundWaitTimer);
+      this.backgroundWaitTimer = null;
+    }
     if (this.child && !this.child.killed) {
       this.child.kill('SIGTERM');
       setTimeout(() => {

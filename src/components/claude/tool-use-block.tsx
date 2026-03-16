@@ -186,7 +186,7 @@ export const ToolUseBlock = memo(function ToolUseBlock({ name, id, input, result
               'font-mono bg-muted/30 p-2 rounded overflow-x-auto max-h-40 whitespace-pre-wrap break-all',
               isError && 'text-destructive'
             )}>
-              {result}
+              {result.length > 2000 ? result.slice(0, 2000) + '...' : result}
             </pre>
           )}
         </div>

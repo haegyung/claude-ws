@@ -6,30 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { SubagentNode } from '@/lib/workflow-tracker';
 import type { WorkflowEntry } from '@/stores/workflow-store';
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return `${minutes}m ${remainingSeconds}s`;
-}
-
-function StatusIcon({ status }: { status: SubagentNode['status'] }) {
-  switch (status) {
-    case 'completed':
-      return <span className="text-green-500 text-xs shrink-0">&#10003;</span>;
-    case 'in_progress':
-      return <span className="text-blue-500 text-xs shrink-0 animate-pulse">&#9679;</span>;
-    case 'failed':
-      return <span className="text-red-500 text-xs shrink-0">&#10007;</span>;
-    case 'orphaned':
-      return <span className="text-yellow-500 text-xs shrink-0">&#8856;</span>;
-    default:
-      return <span className="text-muted-foreground text-xs shrink-0">&#9675;</span>;
-  }
-}
+import { formatDuration } from '@/lib/workflow-format-utils';
+import { AgentStatusIcon } from './workflow-status-indicators';
 
 interface TeamTreeSidebarProps {
   workflows: Map<string, WorkflowEntry>;
@@ -162,7 +140,7 @@ function AgentTreeNode({
       )}
       style={{ paddingLeft: `${12 + indent * 16}px` }}
     >
-      <StatusIcon status={node.status} />
+      <AgentStatusIcon status={node.status} />
       <span className="truncate">{displayName}</span>
       {typeLabel && (
         <span className="text-muted-foreground/60 text-[10px] truncate">({typeLabel})</span>

@@ -6,6 +6,7 @@ import { RunningDots } from '@/components/ui/running-dots';
 import { Badge } from '@/components/ui/badge';
 import { useWorkflowStore } from '@/stores/workflow-store';
 import { cn } from '@/lib/utils';
+import { formatDuration } from '@/lib/workflow-format-utils';
 
 interface AgentSpawnedCardProps {
   agentName: string;
@@ -16,15 +17,6 @@ interface AgentSpawnedCardProps {
   isStreaming?: boolean;
   isError?: boolean;
   toolUseId?: string;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return `${minutes}m ${remainingSeconds}s`;
 }
 
 export function AgentSpawnedCard({

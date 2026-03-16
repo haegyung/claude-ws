@@ -1574,15 +1574,20 @@ app.prepare().then(async () => {
   });
 
   // Persist inter-agent messages to DB
-  const persistedMessageTimestamps = new Set<string>();
+  // Scoped per-attempt to avoid unbounded memory growth on long-running servers
+  const persistedMessageKeys = new Map<string, Set<string>>();
   workflowTracker.on('workflow-update', async ({ attemptId, workflow }) => {
     if (!workflow?.messages?.length) return;
+    if (!persistedMessageKeys.has(attemptId)) {
+      persistedMessageKeys.set(attemptId, new Set());
+    }
+    const seen = persistedMessageKeys.get(attemptId)!;
     try {
       for (const msg of workflow.messages) {
-        // Deduplicate by attemptId + timestamp
-        const key = `${attemptId}:${msg.timestamp}`;
-        if (persistedMessageTimestamps.has(key)) continue;
-        persistedMessageTimestamps.add(key);
+        // Deduplicate by attemptId + sender + timestamp to handle same-ms messages
+        const key = `${msg.fromAgent || msg.fromType}:${msg.toType}:${msg.timestamp}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         await db.insert(schema.agentMessages).values({
           attemptId,
           fromAgent: msg.fromAgent || null,
@@ -1597,6 +1602,11 @@ app.prepare().then(async () => {
     } catch (err) {
       log.error({ err, attemptId }, '[Server] Failed to persist agent messages');
     }
+  });
+
+  // Clean up per-attempt dedup sets when workflow is cleared
+  workflowTracker.on('workflow-cleared', ({ attemptId }: { attemptId: string }) => {
+    persistedMessageKeys.delete(attemptId);
   });
 
   // Extract summary from last assistant message
