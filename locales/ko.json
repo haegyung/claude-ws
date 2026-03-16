@@ -111,7 +111,10 @@
     "waitFileUpload": "파일 업로드가 완료될 때까지 기다려주세요",
     "failedToCreate": "작업 만들기 실패",
     "dragToReorder": "드래그하여 재정렬",
-    "deleteTask": "작업 삭제"
+    "deleteTask": "작업 삭제",
+    "moveTo": "이동",
+    "duplicate": "복제",
+    "delete": "삭제"
   },
   "task": {
     "title": "제목",

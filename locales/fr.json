@@ -111,7 +111,10 @@
     "waitFileUpload": "Veuillez attendre que les fichiers finissent de télécharger",
     "failedToCreate": "Échec de la création de la tâche",
     "dragToReorder": "Glisser pour réorganiser",
-    "deleteTask": "Supprimer la tâche"
+    "deleteTask": "Supprimer la tâche",
+    "moveTo": "Déplacer vers",
+    "duplicate": "Dupliquer",
+    "delete": "Supprimer"
   },
   "task": {
     "title": "Titre",

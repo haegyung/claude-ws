@@ -111,7 +111,10 @@
     "waitFileUpload": "请等待文件上传完成",
     "failedToCreate": "创建任务失败",
     "dragToReorder": "拖动以重新排序",
-    "deleteTask": "删除任务"
+    "deleteTask": "删除任务",
+    "moveTo": "移动到",
+    "duplicate": "复制",
+    "delete": "删除"
   },
   "task": {
     "title": "标题",

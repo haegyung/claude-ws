@@ -111,7 +111,10 @@
     "waitFileUpload": "ファイルのアップロードが完了するまでお待ちください",
     "failedToCreate": "タスクの作成に失敗しました",
     "dragToReorder": "ドラッグして並べ替え",
-    "deleteTask": "タスクを削除"
+    "deleteTask": "タスクを削除",
+    "moveTo": "移動先",
+    "duplicate": "複製",
+    "delete": "削除"
   },
   "task": {
     "title": "タイトル",

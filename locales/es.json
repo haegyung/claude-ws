@@ -111,7 +111,10 @@
     "waitFileUpload": "Por favor espere a que los archivos terminen de subir",
     "failedToCreate": "Fallo al crear tarea",
     "dragToReorder": "Arrastrar para reordenar",
-    "deleteTask": "Eliminar tarea"
+    "deleteTask": "Eliminar tarea",
+    "moveTo": "Mover a",
+    "duplicate": "Duplicar",
+    "delete": "Eliminar"
   },
   "task": {
     "title": "Título",

@@ -111,7 +111,10 @@
     "waitFileUpload": "Vui lòng đợi tập tin tải lên xong",
     "failedToCreate": "Không thể tạo nhiệm vụ",
     "dragToReorder": "Kéo để sắp xếp lại",
-    "deleteTask": "Xóa nhiệm vụ"
+    "deleteTask": "Xóa nhiệm vụ",
+    "moveTo": "Di chuyển đến",
+    "duplicate": "Nhân bản",
+    "delete": "Xóa"
   },
   "task": {
     "title": "Tiêu đề",

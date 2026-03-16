@@ -111,7 +111,10 @@
     "waitFileUpload": "Bitte warten Sie, bis der Datei-Upload abgeschlossen ist",
     "failedToCreate": "Aufgabe konnte nicht erstellt werden",
     "dragToReorder": "Zum Neuanordnen ziehen",
-    "deleteTask": "Aufgabe löschen"
+    "deleteTask": "Aufgabe löschen",
+    "moveTo": "Verschieben nach",
+    "duplicate": "Duplizieren",
+    "delete": "Löschen"
   },
   "task": {
     "title": "Titel",
