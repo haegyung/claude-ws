@@ -98,13 +98,6 @@ export function ConversationView({
     if (currentAttemptId && prevId && currentAttemptId !== prevId) loadHistory(true);
   }, [currentAttemptId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scroll to bottom after history is loaded (when opening a task)
-  useEffect(() => {
-    if (!isLoading) {
-      scrollToBottom();
-    }
-  }, [isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
-
   if (isLoading) {
     return (
       <div className={cn('flex items-center justify-center h-full', className)}>

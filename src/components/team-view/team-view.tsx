@@ -19,6 +19,10 @@ interface TeamViewProps {
 /**
  * Fetch workflow data from DB for completed attempts when in-memory state is empty.
  */
+/**
+ * Fetch workflow data from DB. Only checks the 3 most recent attempts
+ * to avoid excessive serial requests for tasks with many attempts.
+ */
 async function fetchWorkflowFromDb(taskId: string): Promise<{ attemptId: string; data: any } | null> {
   try {
     const res = await fetch(`/api/tasks/${taskId}/attempts`);
@@ -26,8 +30,9 @@ async function fetchWorkflowFromDb(taskId: string): Promise<{ attemptId: string;
     const { attempts } = await res.json();
     if (!attempts?.length) return null;
 
-    // Find the most recent attempt with workflow data, try most recent first
-    for (const attempt of attempts.sort((a: any, b: any) => b.createdAt - a.createdAt)) {
+    const sorted = attempts.sort((a: any, b: any) => b.createdAt - a.createdAt);
+    // Only check the 3 most recent attempts to avoid N+1 fetch storms
+    for (const attempt of sorted.slice(0, 3)) {
       const wfRes = await fetch(`/api/attempts/${attempt.id}/workflow`);
       if (!wfRes.ok) continue;
       const data = await wfRes.json();

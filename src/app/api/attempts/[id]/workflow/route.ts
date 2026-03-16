@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { workflowTracker } from '@/lib/workflow-tracker';
+import { verifyApiKey, unauthorizedResponse } from '@/lib/api-auth';
 import { createAttemptWorkflowService } from '@agentic-sdk/services/attempts/workflow-tree';
 
 const workflowService = createAttemptWorkflowService(db);
@@ -42,9 +43,10 @@ export async function GET(
  * Clears all agent session data (subagents, tasks, messages) for an attempt.
  */
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyApiKey(request)) return unauthorizedResponse();
   const { id: attemptId } = await params;
 
   // Clear in-memory state

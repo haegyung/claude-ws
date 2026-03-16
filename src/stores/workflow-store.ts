@@ -90,5 +90,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       newMap.delete(attemptId);
       return { workflows: newMap };
     });
+    // Also clear persisted data in DB
+    fetch(`/api/attempts/${attemptId}/workflow`, { method: 'DELETE' }).catch(() => {});
   },
 }));

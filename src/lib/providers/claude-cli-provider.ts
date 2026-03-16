@@ -120,11 +120,14 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
         const maxWait = 60000;
         const checkInterval = 2000;
         let waited = 0;
-        const waitTimer = setInterval(() => {
+        session.backgroundWaitTimer = setInterval(() => {
           waited += checkInterval;
           const remaining = session.activeBackgroundAgents || 0;
           if (remaining <= 0 || waited >= maxWait) {
-            clearInterval(waitTimer);
+            if (session.backgroundWaitTimer) {
+              clearInterval(session.backgroundWaitTimer);
+              session.backgroundWaitTimer = null;
+            }
             log.info({ attemptId, waited, remaining }, 'Closing stdin (background agents done or timeout)');
             session.child.stdin?.end();
           }

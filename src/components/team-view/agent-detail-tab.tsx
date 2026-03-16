@@ -1,35 +1,9 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { cn } from '@/lib/utils';
 import type { SubagentNode } from '@/lib/workflow-tracker';
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return `${minutes}m ${remainingSeconds}s`;
-}
-
-function StatusBadge({ status }: { status: SubagentNode['status'] }) {
-  const variants: Record<string, { label: string; className: string }> = {
-    completed: { label: 'Completed', className: 'bg-green-500/10 text-green-600 border-green-500/20' },
-    in_progress: { label: 'Running', className: 'bg-blue-500/10 text-blue-600 border-blue-500/20' },
-    failed: { label: 'Failed', className: 'bg-red-500/10 text-red-600 border-red-500/20' },
-    orphaned: { label: 'Orphaned', className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20' },
-    pending: { label: 'Pending', className: 'bg-muted text-muted-foreground' },
-  };
-  const v = variants[status] || variants.pending;
-
-  return (
-    <Badge variant="outline" className={cn('text-[10px]', v.className)}>
-      {v.label}
-    </Badge>
-  );
-}
+import { formatDuration } from '@/lib/workflow-format-utils';
+import { AgentStatusBadge } from './workflow-status-indicators';
 
 interface AgentDetailTabProps {
   agent: SubagentNode;
@@ -43,7 +17,7 @@ export function AgentDetailTab({ agent }: AgentDetailTabProps) {
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold">{agent.name || agent.type}</h3>
-            <StatusBadge status={agent.status} />
+            <AgentStatusBadge status={agent.status} />
           </div>
 
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
