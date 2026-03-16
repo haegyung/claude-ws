@@ -7,8 +7,8 @@
  */
 
 import { createHash } from 'crypto';
-import { createLogger } from '@/lib/logger';
-import { loadAllFromDisk, saveToFile, deleteFile } from '@/lib/proxy-token-cache-disk-storage';
+import { createLogger } from './logger';
+import { loadAllFromDisk, saveToFile, deleteFile } from './proxy-token-cache-disk-storage';
 
 const log = createLogger('ProxyTokenCache');
 

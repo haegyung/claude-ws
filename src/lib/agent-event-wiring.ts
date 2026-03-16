@@ -7,14 +7,14 @@
  */
 
 import type { ClaudeOutput } from '../types';
-import type { BackgroundShellInfo, SDKResultMessage, UsageEvent } from '@/lib/sdk-event-adapter';
-import { sessionManager } from '@/lib/session-manager';
-import { checkpointManager } from '@/lib/checkpoint-manager';
-import { usageTracker } from '@/lib/usage-tracker';
-import { collectGitStats, gitStatsCache } from '@/lib/git-stats-collector';
-import { readOutputFile } from '@/lib/agent-output-handler';
-import { trackWorkflowFromMessage } from '@/lib/agent-workflow-message-tracker';
-import type { Provider } from '@/lib/providers';
+import type { BackgroundShellInfo, SDKResultMessage, UsageEvent } from './sdk-event-adapter';
+import { sessionManager } from './session-manager';
+import { checkpointManager } from './checkpoint-manager';
+import { usageTracker } from './usage-tracker';
+import { collectGitStats, gitStatsCache } from './git-stats-collector';
+import { readOutputFile } from './agent-output-handler';
+import { trackWorkflowFromMessage } from './agent-workflow-message-tracker';
+import type { Provider } from './providers';
 
 /** Interface for the AgentManager context needed by event wiring */
 export interface EventWiringContext {

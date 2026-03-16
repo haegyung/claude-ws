@@ -5,10 +5,10 @@
  * logic using tunnel configuration stored in the database.
  */
 
-import { db } from '@/lib/db';
-import { appSettings } from '@/lib/db/schema';
+import { db } from './db';
+import { appSettings } from './db/schema';
 import { eq } from 'drizzle-orm';
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 
 const log = createLogger('TunnelReconnectionManager');
 

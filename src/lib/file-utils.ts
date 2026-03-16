@@ -1,5 +1,5 @@
 import { join, extname } from 'path';
-import { getContentTypeForExtension } from '@/lib/content-types';
+import { getContentTypeForExtension } from './content-types';
 
 const _userCwd = process.env.CLAUDE_WS_USER_CWD || process.cwd();
 const _dataDir = process.env.DATA_DIR || join(_userCwd, 'data');

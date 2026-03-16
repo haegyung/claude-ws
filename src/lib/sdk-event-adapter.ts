@@ -1,6 +1,6 @@
 /**
  * Re-export from agentic-sdk shared module, with type bridge for claude-ws ClaudeOutput.
- * Consumers import from '@/lib/sdk-event-adapter' — this shim keeps those imports working.
+ * Consumers import from './sdk-event-adapter' — this shim keeps those imports working.
  */
 
 import {

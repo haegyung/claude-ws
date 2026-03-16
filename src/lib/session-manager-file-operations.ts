@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 
 const log = createLogger('SessionFileOps');
 

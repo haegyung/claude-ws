@@ -6,7 +6,7 @@
  */
 
 import { resolve } from 'path';
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 
 const log = createLogger('AgentOutputHandler');
 

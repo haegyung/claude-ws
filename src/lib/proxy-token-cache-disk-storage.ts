@@ -7,8 +7,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { createLogger } from '@/lib/logger';
-import type { CachedResponse } from '@/lib/proxy-token-cache';
+import { createLogger } from './logger';
+import type { CachedResponse } from './proxy-token-cache';
 
 const log = createLogger('ProxyTokenCacheDiskStorage');
 

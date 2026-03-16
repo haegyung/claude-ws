@@ -6,9 +6,9 @@
  * TaskCreate/TaskUpdate events, and Bash BGPID patterns.
  */
 
-import { workflowTracker } from '@/lib/workflow-tracker';
-import { isServerCommand } from '@/lib/agent-output-handler';
-import type { EventWiringContext } from '@/lib/agent-event-wiring';
+import { workflowTracker } from './workflow-tracker';
+import { isServerCommand } from './agent-output-handler';
+import type { EventWiringContext } from './agent-event-wiring';
 
 /**
  * Track workflow from raw SDK/CLI messages (subagent starts/ends, team creation, Bash commands).

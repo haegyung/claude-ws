@@ -7,16 +7,16 @@
  * - Managing session lifecycle including forking after rewind
  */
 
-import { db, schema } from '@/lib/db';
+import { db, schema } from './db';
 import { eq, desc, and, inArray } from 'drizzle-orm';
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 import {
   getSessionFilePath,
   sessionFileExists,
   validateSessionFile,
   findLastGoodMessageInSession,
-} from '@/lib/session-manager-file-operations';
-import { getConversationSummary } from '@/lib/session-manager-conversation-summary';
+} from './session-manager-file-operations';
+import { getConversationSummary } from './session-manager-conversation-summary';
 
 const log = createLogger('SessionManager');
 

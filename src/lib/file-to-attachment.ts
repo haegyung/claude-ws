@@ -4,7 +4,7 @@
  */
 
 import { MAX_FILE_SIZE } from './file-utils';
-import { getContentTypeForExtension } from '@/lib/content-types';
+import { getContentTypeForExtension } from './content-types';
 import { extname, basename } from 'path';
 
 interface FileContentResponse {

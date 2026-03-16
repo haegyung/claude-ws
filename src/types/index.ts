@@ -200,7 +200,7 @@ export interface GitDiff {
 }
 
 // Re-export AttemptFile from db schema
-export type { AttemptFile, NewAttemptFile } from '@/lib/db/schema';
+export type { AttemptFile, NewAttemptFile } from '../lib/db/schema';
 
 // Pending file attachment type (before attempt submission)
 export type PendingFileStatus = 'pending' | 'uploading' | 'uploaded' | 'error';

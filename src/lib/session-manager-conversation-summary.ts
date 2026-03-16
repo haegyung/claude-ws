@@ -5,9 +5,9 @@
  * Used by compact to carry context into a fresh session after the token limit is hit.
  */
 
-import { db, schema } from '@/lib/db';
+import { db, schema } from './db';
 import { eq, desc, and, inArray } from 'drizzle-orm';
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 
 const log = createLogger('SessionConversationSummary');
 

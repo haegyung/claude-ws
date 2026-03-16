@@ -6,7 +6,7 @@
  * to ANTHROPIC_PROXIED_BASE_URL, keeping ANTHROPIC_BASE_URL locked to the local proxy.
  */
 
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 
 const log = createLogger('AnthropicProxyEnvInterceptor');
 

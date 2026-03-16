@@ -4,9 +4,9 @@
  */
 
 import { nanoid } from 'nanoid';
-import { db, schema } from '@/lib/db';
+import { db, schema } from './db';
 import { eq, and, asc, lt } from 'drizzle-orm';
-import { createLogger } from '@/lib/logger';
+import { createLogger } from './logger';
 
 const log = createLogger('CheckpointForkHelpers');
 

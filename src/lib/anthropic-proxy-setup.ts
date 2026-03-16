@@ -11,10 +11,10 @@
 
 import { join } from 'path';
 import { homedir } from 'os';
-import { getPort, getHostname } from '@/lib/server-port-configuration';
-import { createLogger } from '@/lib/logger';
-import { reloadSettingsConfig } from '@/lib/anthropic-proxy-config-loader';
-import { installEnvInterceptor } from '@/lib/anthropic-proxy-env-interceptor';
+import { getPort, getHostname } from './server-port-configuration';
+import { createLogger } from './logger';
+import { reloadSettingsConfig } from './anthropic-proxy-config-loader';
+import { installEnvInterceptor } from './anthropic-proxy-env-interceptor';
 
 const log = createLogger('AnthropicProxy');
 

@@ -14,14 +14,14 @@ process.env.CLAUDE_CODE_ENABLE_TASKS = 'true';
 
 import { EventEmitter } from 'events';
 import type { ClaudeOutput } from '../types';
-import type { BackgroundShellInfo } from '@/lib/sdk-event-adapter';
-import { getSystemPrompt } from '@/lib/system-prompt';
-import { modelIdToDisplayName } from '@/lib/models';
-import { createLogger } from '@/lib/logger';
-import { getActiveProvider, type Provider, type ProviderSession } from '@/lib/providers';
-import { buildOutputFormatPrompt } from '@/lib/agent-output-handler';
-import { wireProviderEvents, type EventWiringContext } from '@/lib/agent-event-wiring';
-import { PersistentQuestionStore, type PersistentQuestionData } from '@/lib/agent-persistent-question-store';
+import type { BackgroundShellInfo } from './sdk-event-adapter';
+import { getSystemPrompt } from './system-prompt';
+import { modelIdToDisplayName } from './models';
+import { createLogger } from './logger';
+import { getActiveProvider, type Provider, type ProviderSession } from './providers';
+import { buildOutputFormatPrompt } from './agent-output-handler';
+import { wireProviderEvents, type EventWiringContext } from './agent-event-wiring';
+import { PersistentQuestionStore, type PersistentQuestionData } from './agent-persistent-question-store';
 
 const log = createLogger('AgentManager');
 
