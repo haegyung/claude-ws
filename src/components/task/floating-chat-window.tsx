@@ -48,6 +48,7 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
       taskStatus: task.status,
       taskChatInit: task.chatInit,
       taskLastModel: task.lastModel,
+      taskLastProvider: task.lastProvider,
       taskDescription: task.description,
       pendingAutoStartTask,
       pendingAutoStartPrompt,
@@ -94,6 +95,7 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
               isStreaming={isRunning}
               taskId={task.id}
               taskLastModel={task.lastModel}
+              taskLastProvider={task.lastProvider}
               projectPath={currentProjectPath}
               initialValue={!hasSentFirstMessage && !task.chatInit && task.description ? task.description : undefined}
             />

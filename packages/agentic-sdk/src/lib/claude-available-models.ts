@@ -10,6 +10,7 @@ export interface Model {
   description?: string;
   tier: 'opus' | 'sonnet' | 'haiku';
   group?: string;
+  provider?: 'claude-cli' | 'claude-sdk';
 }
 
 export const AVAILABLE_MODELS: Model[] = [
@@ -19,6 +20,7 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Most capable model',
     tier: 'opus',
     group: 'Claude Code CLI',
+    provider: 'claude-cli',
   },
   {
     id: 'claude-sonnet-4-6',
@@ -26,6 +28,7 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Latest Sonnet model',
     tier: 'sonnet',
     group: 'Claude Code CLI',
+    provider: 'claude-cli',
   },
   {
     id: 'claude-haiku-4-5-20251001',
@@ -33,6 +36,7 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Fastest model',
     tier: 'haiku',
     group: 'Claude Code CLI',
+    provider: 'claude-cli',
   },
 ];
 

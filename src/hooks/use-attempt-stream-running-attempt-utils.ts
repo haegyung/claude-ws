@@ -131,7 +131,8 @@ interface UseInterruptAndSendOptions {
     prompt: string,
     displayPrompt?: string,
     fileIds?: string[],
-    model?: string
+    model?: string,
+    provider?: string
   ) => void;
 }
 
@@ -156,7 +157,8 @@ export function useInterruptAndSend({
       prompt: string,
       displayPrompt?: string,
       fileIds?: string[],
-      model?: string
+      model?: string,
+      provider?: string
     ) => {
       const socket = socketRef.current;
       if (!socket || !isConnected) return;
@@ -185,7 +187,7 @@ export function useInterruptAndSend({
       setActiveQuestion(null);
       if (currentTaskIdRef.current) removeRunningTask(currentTaskIdRef.current);
 
-      startAttempt(taskId, prompt, displayPrompt, fileIds, model);
+      startAttempt(taskId, prompt, displayPrompt, fileIds, model, provider);
     },
     [isConnected, startAttempt]
   );

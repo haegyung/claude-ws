@@ -18,10 +18,11 @@ interface ChatModelSelectorProps {
   disabled?: boolean;
   taskId?: string;
   taskLastModel?: string | null;
+  taskLastProvider?: string | null;
 }
 
-export function ChatModelSelector({ disabled = false, taskId, taskLastModel }: ChatModelSelectorProps) {
-  const { availableModels, isLoading, loadModels, setModel, getTaskModel, getShortName } =
+export function ChatModelSelector({ disabled = false, taskId, taskLastModel, taskLastProvider }: ChatModelSelectorProps) {
+  const { availableModels, isLoading, loadModels, setModel, getTaskModel, getShortName, defaultModel } =
     useModelStore();
 
   // Load models on mount
@@ -32,29 +33,18 @@ export function ChatModelSelector({ disabled = false, taskId, taskLastModel }: C
   }, [availableModels.length, loadModels]);
 
   // Get current model for this specific task
-  const currentModel = taskId ? getTaskModel(taskId, taskLastModel) : useModelStore.getState().defaultModel;
+  const currentModel = taskId ? getTaskModel(taskId, taskLastModel) : defaultModel;
   const shortName = getShortName(taskId, taskLastModel);
 
   const handleSelectModel = (modelId: string) => {
     setModel(modelId, taskId);
   };
 
-  // Group models by group field, preserving order
-  const groupedModels = useMemo(() => {
-    const ungrouped: typeof availableModels = [];
-    const groups = new Map<string, typeof availableModels>();
-
-    for (const model of availableModels) {
-      if (model.group) {
-        const list = groups.get(model.group) ?? [];
-        list.push(model);
-        groups.set(model.group, list);
-      } else {
-        ungrouped.push(model);
-      }
-    }
-
-    return { ungrouped, groups };
+  // Split models by provider for two-section dropdown
+  const { cliModels, sdkModels } = useMemo(() => {
+    const cliModels = availableModels.filter(m => m.provider === 'claude-cli' || !m.provider);
+    const sdkModels = availableModels.filter(m => m.provider === 'claude-sdk');
+    return { cliModels, sdkModels };
   }, [availableModels]);
 
   const renderModelItem = (model: typeof availableModels[number]) => (
@@ -110,17 +100,25 @@ export function ChatModelSelector({ disabled = false, taskId, taskLastModel }: C
         className="w-64 z-[9999]"
         sideOffset={8}
       >
-        {groupedModels.ungrouped.map(renderModelItem)}
-        {groupedModels.ungrouped.length > 0 && groupedModels.groups.size > 0 && (
-          <DropdownMenuSeparator />
-        )}
-        {[...groupedModels.groups.entries()].map(([group, models], idx) => (
-          <div key={group}>
-            {idx > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuLabel className="text-xs text-muted-foreground">{group}</DropdownMenuLabel>
-            {models.map(renderModelItem)}
+        {/* Section 1: Claude Code CLI */}
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Claude Code CLI
+        </DropdownMenuLabel>
+        {cliModels.map(renderModelItem)}
+
+        <DropdownMenuSeparator />
+
+        {/* Section 2: Custom Model */}
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Custom Model
+        </DropdownMenuLabel>
+        {sdkModels.length > 0 ? (
+          sdkModels.map(renderModelItem)
+        ) : (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground/60 italic">
+            Configure in Settings
           </div>
-        ))}
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -24,6 +24,7 @@ export function useTaskAttemptStreamHandler(
     taskStatus,
     taskChatInit,
     taskLastModel,
+    taskLastProvider,
     taskDescription,
     pendingAutoStartTask,
     pendingAutoStartPrompt,
@@ -32,6 +33,7 @@ export function useTaskAttemptStreamHandler(
     taskStatus: string;
     taskChatInit: boolean;
     taskLastModel?: string | null;
+    taskLastProvider?: string | null;
     taskDescription?: string | null;
     pendingAutoStartTask: string | null;
     pendingAutoStartPrompt: string | null;
@@ -41,7 +43,7 @@ export function useTaskAttemptStreamHandler(
   const t = useTranslations('chat');
   const { updateTaskStatus, setTaskChatInit, moveTaskToInProgress, setPendingAutoStartTask } = useTaskStore();
   const { getPendingFiles, clearFiles } = useAttachmentStore();
-  const { getTaskModel } = useModelStore();
+  const { getTaskModel, getTaskProvider } = useModelStore();
 
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const [currentAttemptFiles, setCurrentAttemptFiles] = useState<PendingFile[]>([]);
@@ -79,14 +81,14 @@ export function useTaskAttemptStreamHandler(
         if (!isRunning && hasAutoStartedRef.current && taskId === pendingAutoStartTask) {
           const promptToSend = pendingAutoStartPrompt || taskDescription!;
           const promptToDisplay = pendingAutoStartPrompt ? taskDescription! : undefined;
-          startAttempt(taskId, promptToSend, promptToDisplay, fileIds, getTaskModel(taskId, taskLastModel));
+          startAttempt(taskId, promptToSend, promptToDisplay, fileIds, getTaskModel(taskId, taskLastModel), getTaskProvider(taskId, taskLastProvider));
           clearFiles(taskId);
         }
         setPendingAutoStartTask(null);
       }, 50);
     }
     if (taskId !== pendingAutoStartTask) hasAutoStartedRef.current = false;
-  }, [pendingAutoStartTask, pendingAutoStartPrompt, pendingAutoStartFileIds, taskId, isRunning, isConnected, taskStatus, taskChatInit, taskDescription, taskLastModel, setPendingAutoStartTask, startAttempt, setTaskChatInit, moveTaskToInProgress, getPendingFiles, clearFiles, getTaskModel]);
+  }, [pendingAutoStartTask, pendingAutoStartPrompt, pendingAutoStartFileIds, taskId, isRunning, isConnected, taskStatus, taskChatInit, taskDescription, taskLastModel, taskLastProvider, setPendingAutoStartTask, startAttempt, setTaskChatInit, moveTaskToInProgress, getPendingFiles, clearFiles, getTaskModel, getTaskProvider]);
 
   const handlePromptSubmit = (prompt: string, displayPrompt?: string, fileIds?: string[]) => {
     if (!taskId) return;
@@ -95,7 +97,7 @@ export function useTaskAttemptStreamHandler(
     lastCompletedTaskRef.current = null;
     const pendingFiles = getPendingFiles(taskId);
     setCurrentAttemptFiles(pendingFiles);
-    startAttempt(taskId, prompt, displayPrompt, fileIds, getTaskModel(taskId, taskLastModel));
+    startAttempt(taskId, prompt, displayPrompt, fileIds, getTaskModel(taskId, taskLastModel), getTaskProvider(taskId, taskLastProvider));
   };
 
   const handleInterruptAndSend = (prompt: string, displayPrompt?: string, fileIds?: string[]) => {
@@ -105,7 +107,7 @@ export function useTaskAttemptStreamHandler(
     lastCompletedTaskRef.current = null;
     const pendingFiles = getPendingFiles(taskId);
     setCurrentAttemptFiles(pendingFiles);
-    interruptAndSend(taskId, prompt, displayPrompt, fileIds, getTaskModel(taskId, taskLastModel));
+    interruptAndSend(taskId, prompt, displayPrompt, fileIds, getTaskModel(taskId, taskLastModel), getTaskProvider(taskId, taskLastProvider));
   };
 
   const resetForNewTask = () => {

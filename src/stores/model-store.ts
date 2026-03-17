@@ -9,20 +9,25 @@ const log = createLogger('ModelStore');
 interface ModelStore {
   // Global default model (from env/cached/default)
   defaultModel: string;
+  defaultProvider: string;
   // Per-task model overrides
   taskModels: Record<string, string>;
+  taskProviders: Record<string, string>;
   availableModels: Model[];
   isLoading: boolean;
   source: 'env' | 'cached' | 'default' | null;
   loadModels: () => Promise<void>;
   setModel: (modelId: string, taskId?: string) => Promise<void>;
   getTaskModel: (taskId: string, taskLastModel?: string | null) => string;
+  getTaskProvider: (taskId: string, taskLastProvider?: string | null) => string;
   getShortName: (taskId?: string, taskLastModel?: string | null) => string;
 }
 
 export const useModelStore = create<ModelStore>((set, get) => ({
   defaultModel: DEFAULT_MODEL_ID,
+  defaultProvider: 'claude-cli',
   taskModels: {},
+  taskProviders: {},
   availableModels: [],
   isLoading: false,
   source: null,
@@ -45,6 +50,7 @@ export const useModelStore = create<ModelStore>((set, get) => ({
       set({
         availableModels: data.models,
         defaultModel: data.current,
+        defaultProvider: data.currentProvider || 'claude-cli',
         source: data.source,
         isLoading: false,
       });
@@ -54,15 +60,20 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     }
   },
 
-  // Set model for a task (saves to task.lastModel)
+  // Set model for a task (saves to task.lastModel + lastProvider)
   setModel: async (modelId: string, taskId?: string) => {
-    const { taskModels } = get();
+    const { taskModels, taskProviders, availableModels } = get();
+    const model = availableModels.find(m => m.id === modelId);
+    const provider = model?.provider || 'claude-cli';
 
     if (taskId) {
       // Update local state for this task
-      set({ taskModels: { ...taskModels, [taskId]: modelId } });
+      set({
+        taskModels: { ...taskModels, [taskId]: modelId },
+        taskProviders: { ...taskProviders, [taskId]: provider },
+      });
 
-      // Save to task's lastModel
+      // Save to task's lastModel + lastProvider
       try {
         const response = await fetch(`/api/tasks/${taskId}`, {
           method: 'PATCH',
@@ -70,7 +81,7 @@ export const useModelStore = create<ModelStore>((set, get) => ({
             'Content-Type': 'application/json',
             'x-api-key': localStorage.getItem('apiKey') || '',
           },
-          body: JSON.stringify({ lastModel: modelId }),
+          body: JSON.stringify({ lastModel: modelId, lastProvider: provider }),
         });
 
         if (!response.ok) {
@@ -82,8 +93,10 @@ export const useModelStore = create<ModelStore>((set, get) => ({
           }
           // Rollback on other errors
           const newTaskModels = { ...taskModels };
+          const newTaskProviders = { ...taskProviders };
           delete newTaskModels[taskId];
-          set({ taskModels: newTaskModels });
+          delete newTaskProviders[taskId];
+          set({ taskModels: newTaskModels, taskProviders: newTaskProviders });
           const errorText = await response.text();
           log.error({ status: response.status, errorText }, 'Failed to save task model');
           throw new Error(`Failed to save task model: ${response.status}`);
@@ -130,6 +143,12 @@ export const useModelStore = create<ModelStore>((set, get) => ({
     }
 
     return candidate;
+  },
+
+  // Get provider for a specific task
+  getTaskProvider: (taskId: string, taskLastProvider?: string | null) => {
+    const { taskProviders, defaultProvider } = get();
+    return taskProviders[taskId] || taskLastProvider || defaultProvider || 'claude-cli';
   },
 
   getShortName: (taskId?: string, taskLastModel?: string | null) => {

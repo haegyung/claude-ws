@@ -65,6 +65,7 @@ export function TaskDetailPanel({ className }: TaskDetailPanelProps) {
       taskStatus: selectedTask?.status ?? 'todo',
       taskChatInit: selectedTask?.chatInit ?? false,
       taskLastModel: selectedTask?.lastModel,
+      taskLastProvider: selectedTask?.lastProvider,
       taskDescription: selectedTask?.description,
       pendingAutoStartTask,
       pendingAutoStartPrompt,
@@ -183,6 +184,7 @@ export function TaskDetailPanel({ className }: TaskDetailPanelProps) {
               key={`${selectedTask.id}-${hasSentFirstMessage ? 'sent' : 'initial'}`} ref={promptInputRef}
               onSubmit={handlePromptSubmit} onCancel={cancelAttempt} onInterruptAndSend={handleInterruptAndSend}
               isStreaming={isRunning} taskId={selectedTask.id} taskLastModel={selectedTask.lastModel}
+              taskLastProvider={selectedTask.lastProvider}
               projectPath={currentProjectPath}
               initialValue={!hasSentFirstMessage && !selectedTask.chatInit && !pendingAutoStartTask && selectedTask.description ? selectedTask.description : undefined}
             />

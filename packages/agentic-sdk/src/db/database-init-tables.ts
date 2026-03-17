@@ -206,6 +206,7 @@ export function initDbTables(sqlite: Database.Database) {
     { sql: `ALTER TABLE attempts ADD COLUMN baseline_context INTEGER NOT NULL DEFAULT 0` },
     { sql: `ALTER TABLE attempts ADD COLUMN output_format TEXT` },
     { sql: `ALTER TABLE attempts ADD COLUMN output_schema TEXT` },
+    { sql: `ALTER TABLE tasks ADD COLUMN last_provider TEXT` },
   ];
 
   for (const migration of migrations) {

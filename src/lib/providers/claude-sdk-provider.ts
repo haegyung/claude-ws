@@ -88,10 +88,9 @@ export class ClaudeSDKProvider extends EventEmitter implements Provider {
       const effectiveModel = model ? this.resolveModel(model) : 'opus';
 
       const opts = buildQueryOptions({
-        projectPath, model: effectiveModel, sessionOptions, maxTurns, systemPromptAppend,
+        projectPath, model: effectiveModel, sessionOptions, maxTurns,
         mcpServers: mcpConfig?.mcpServers, mcpToolWildcards, controller,
         canUseToolCallback: this.makeCanUseTool(attemptId),
-        stderrHandler: (data) => log.error({ stderr: data.slice(0, 500), attemptId }, 'Claude process stderr'),
       });
 
       log.info({
