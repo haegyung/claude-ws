@@ -11,7 +11,7 @@
  * - Windows claude.exe path resolution
  */
 
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { join, normalize } from 'path';
 import { checkpointManager } from '../checkpoint-manager';
 import { createLogger } from '../logger';
@@ -40,7 +40,6 @@ export interface QueryOptionsBuilderParams {
   mcpToolWildcards: string[];
   controller: AbortController;
   canUseToolCallback: CanUseToolCallback;
-  stderrHandler: (data: string) => void;
 }
 
 /**
@@ -48,8 +47,8 @@ export interface QueryOptionsBuilderParams {
  */
 export function buildQueryOptions(params: QueryOptionsBuilderParams) {
   const {
-    projectPath, model, sessionOptions, maxTurns, systemPromptAppend,
-    mcpServers, mcpToolWildcards, controller, canUseToolCallback, stderrHandler,
+    projectPath, model, sessionOptions, maxTurns,
+    mcpServers, mcpToolWildcards, controller, canUseToolCallback,
   } = params;
 
   const checkpointOptions = checkpointManager.getCheckpointingOptions();
@@ -70,18 +69,11 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
     return undefined;
   })();
 
-  // Build clean subprocess env — strip proxy/session-detection vars
-  const subprocessEnv = { ...process.env };
-  delete subprocessEnv.ANTHROPIC_BASE_URL;
-  delete subprocessEnv.ANTHROPIC_PROXIED_BASE_URL;
-  delete subprocessEnv.CLAUDECODE;
-  delete subprocessEnv.CLAUDE_CODE_ENTRYPOINT;
-
+  // Match query options shape from 964deb6 for performance — minimal env override only
   const queryOptions = {
     cwd: projectPath,
     model,
     permissionMode: 'bypassPermissions' as const,
-    settingSources: ['user', 'project'] as ('user' | 'project')[],
     ...(mcpServers ? { mcpServers } : {}),
     allowedTools: [
       'Skill', 'Task',
@@ -97,14 +89,11 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
     ...(maxTurns ? { maxTurns } : {}),
     abortController: controller,
     canUseTool: canUseToolCallback,
-    env: subprocessEnv,
     ...(resolvedClaudePath ? { pathToClaudeCodeExecutable: resolvedClaudePath } : {}),
-    systemPrompt: {
-      type: 'preset' as const,
-      preset: 'claude_code' as const,
-      append: systemPromptAppend || '',
-    },
-    stderr: stderrHandler,
+    // Build isolated env: strip Claude Code session/auth vars so the SDK subprocess
+    // doesn't inherit remote MCP servers, login state, or nested session detection.
+    // Only pass through vars needed for LLM API calls and basic operation.
+    env: buildIsolatedSubprocessEnv(model),
   };
 
   log.debug({ model, cwd: projectPath, mcpCount: mcpToolWildcards.length }, 'Query options built');
@@ -155,4 +144,49 @@ export function buildCanUseToolCallback(
 
     return { behavior: 'allow', updatedInput: input };
   };
+}
+
+// ─── Isolated Subprocess Environment ─────────────────────────────────────────
+
+/**
+ * Vars to strip from subprocess env to prevent the SDK CLI from:
+ * - Detecting a nested Claude Code session (CLAUDECODE)
+ * - Inheriting Claude Code entrypoint metadata
+ * - Loading remote MCP servers via claude.ai auth tokens
+ * - Picking up ClaudeKit plugin state
+ */
+const STRIPPED_ENV_PREFIXES = [
+  'CLAUDECODE',           // nested session detection
+  'CLAUDE_CODE_ENTRYPOINT', // entrypoint metadata
+  'CK_',                  // ClaudeKit plugin vars
+];
+
+/**
+ * Build a clean env for the SDK subprocess.
+ * Keeps all system/LLM vars, strips session/auth/plugin vars,
+ * and redirects CLAUDE_CONFIG_DIR to an isolated empty dir
+ * so the CLI can't fetch remote MCP servers from claude.ai.
+ */
+function buildIsolatedSubprocessEnv(model: string): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+
+  for (const [key, value] of Object.entries(process.env)) {
+    // Skip vars that leak session state or plugin config
+    if (STRIPPED_ENV_PREFIXES.some(prefix => key.startsWith(prefix))) continue;
+    env[key] = value;
+  }
+
+  // Override model for the subprocess
+  env.ANTHROPIC_MODEL = model;
+
+  // Point CLI config to an isolated dir so it has no auth tokens
+  // and cannot fetch remote MCP servers from claude.ai
+  const isolatedConfigDir = join(
+    process.env.DATA_DIR || './data',
+    'claude-sdk-isolated-config'
+  );
+  try { mkdirSync(isolatedConfigDir, { recursive: true }); } catch { /* exists */ }
+  env.CLAUDE_CONFIG_DIR = isolatedConfigDir;
+
+  return env;
 }

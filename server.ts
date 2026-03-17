@@ -48,7 +48,6 @@ import { usageTracker } from './src/lib/usage-tracker';
 import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
-
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -143,6 +142,7 @@ app.prepare().then(async () => {
         outputFormat?: 'json' | 'html' | 'markdown' | 'yaml' | 'raw' | 'custom';
         outputSchema?: string;
         model?: string;  // Optional: model ID for this attempt
+        provider?: 'claude-cli' | 'claude-sdk';  // Optional: provider for this attempt
       }) => {
         const {
           taskId,
@@ -156,7 +156,8 @@ app.prepare().then(async () => {
           projectRootPath,
           outputFormat,
           outputSchema,
-          model
+          model,
+          provider
         } = data;
 
         log.info({
@@ -168,7 +169,9 @@ app.prepare().then(async () => {
           taskTitle,
           projectRootPath,
           outputFormat,
-          hasOutputSchema: !!outputSchema
+          hasOutputSchema: !!outputSchema,
+          model,
+          provider,
         }, '[Socket] attempt:start received');
 
         try {
@@ -317,6 +320,7 @@ app.prepare().then(async () => {
 
           // Create attempt record
           const attemptId = nanoid();
+
           await db.insert(schema.attempts).values({
             id: attemptId,
             taskId,
@@ -326,6 +330,7 @@ app.prepare().then(async () => {
             outputFormat: outputFormat || null,
             outputSchema: outputSchema || null,
           });
+
 
           // Process file attachments if any
           let filePaths: string[] = [];
@@ -348,11 +353,13 @@ app.prepare().then(async () => {
           socket.join(`attempt:${attemptId}`);
 
           // Start Claude Agent SDK query
+
           agentManager.start({
             attemptId,
             projectPath: project.path,
             prompt,
-            model: model || undefined,  // Pass model to agent-manager
+            model: model || undefined,
+            provider: provider || undefined,
             sessionOptions: Object.keys(sessionOptions).length > 0 ? sessionOptions : undefined,
             filePaths: filePaths.length > 0 ? filePaths : undefined,
             outputFormat,
@@ -365,9 +372,11 @@ app.prepare().then(async () => {
             : sessionOptions.resume
               ? `resuming session ${sessionOptions.resume}`
               : 'new session';
+
           log.info(`[Server] Started attempt ${attemptId} (${sessionMode})${filePaths.length > 0 ? ` with ${filePaths.length} files` : ''}`);
 
           socket.emit('attempt:started', { attemptId, taskId, outputFormat, outputSchema });
+
           // Global event for all clients to track running tasks
           io.emit('task:started', { taskId });
         } catch (error) {

@@ -47,12 +47,14 @@ function buildModelList(): Model[] {
           name: modelIdToDisplayName(value),
           tier,
           group,
+          provider: 'claude-sdk' as const,
         });
       }
     }
 
     if (envModels.length > 0) {
-      return envModels;
+      // Return BOTH CLI and SDK models for dual-section dropdown
+      return [...AVAILABLE_MODELS, ...envModels];
     }
   }
 
@@ -115,9 +117,14 @@ export async function GET() {
       }
     }
 
+    // Derive currentProvider from the model's provider field in the list
+    const currentModelDef = models.find(m => m.id === currentModelId);
+    const currentProvider = currentModelDef?.provider || 'claude-cli';
+
     return NextResponse.json({
       models,
       current: currentModelId,
+      currentProvider,
       source,
     });
   } catch (error) {

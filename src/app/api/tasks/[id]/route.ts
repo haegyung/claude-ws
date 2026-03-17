@@ -45,9 +45,9 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { title, description, status, position, chatInit, lastModel } = body;
+    const { title, description, status, position, chatInit, lastModel, lastProvider } = body;
 
-    if (!title && !description && !status && position === undefined && chatInit === undefined && lastModel === undefined) {
+    if (!title && !description && !status && position === undefined && chatInit === undefined && lastModel === undefined && lastProvider === undefined) {
       return NextResponse.json(
         { error: 'At least one field is required' },
         { status: 400 }
@@ -80,6 +80,12 @@ export async function PUT(
     if (position !== undefined) updateData.position = position;
     if (chatInit !== undefined) updateData.chatInit = chatInit ? 1 : 0;
     if (lastModel !== undefined) updateData.lastModel = lastModel;
+    if (lastProvider !== undefined) {
+      if (!['claude-cli', 'claude-sdk'].includes(lastProvider)) {
+        return NextResponse.json({ error: 'Invalid lastProvider value' }, { status: 400 });
+      }
+      updateData.lastProvider = lastProvider;
+    }
 
     const updatedTask = await taskService.update(id, updateData);
 

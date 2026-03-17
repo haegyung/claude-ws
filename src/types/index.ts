@@ -49,6 +49,7 @@ export interface Task {
   position: number;
   chatInit: boolean;
   lastModel: string | null;  // Last used model for this task
+  lastProvider: string | null;  // Last used provider for this task
   createdAt: number;
   updatedAt: number;
 }

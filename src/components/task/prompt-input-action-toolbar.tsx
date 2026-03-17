@@ -14,6 +14,7 @@ interface PromptInputActionToolbarProps {
   hideSendButton: boolean;
   taskId?: string;
   taskLastModel?: string | null;
+  taskLastProvider?: string | null;
   onCancel?: () => void;
   onOpenFilePicker: () => void;
 }
@@ -28,6 +29,7 @@ export function PromptInputActionToolbar({
   hideSendButton,
   taskId,
   taskLastModel,
+  taskLastProvider,
   onCancel,
   onOpenFilePicker,
 }: PromptInputActionToolbarProps) {
@@ -51,7 +53,7 @@ export function PromptInputActionToolbar({
 
       {/* Right: model selector + send/stop buttons */}
       <div className="flex items-center gap-1">
-        <ChatModelSelector disabled={disabled && !isStreaming} taskId={taskId} taskLastModel={taskLastModel} />
+        <ChatModelSelector disabled={disabled && !isStreaming} taskId={taskId} taskLastModel={taskLastModel} taskLastProvider={taskLastProvider} />
         {!hideSendButton && (
           isStreaming ? (
             <div className="flex items-center gap-1">

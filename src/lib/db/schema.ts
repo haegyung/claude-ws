@@ -33,6 +33,7 @@ export const tasks = sqliteTable(
     position: integer('position').notNull(),
     chatInit: integer('chat_init', { mode: 'boolean' }).notNull().default(false),
     lastModel: text('last_model'),
+    lastProvider: text('last_provider'),
     rewindSessionId: text('rewind_session_id'),
     rewindMessageUuid: text('rewind_message_uuid'),
     createdAt: integer('created_at', { mode: 'number' })
