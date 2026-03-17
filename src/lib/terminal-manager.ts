@@ -15,9 +15,22 @@ import { createLogger } from './logger';
 
 const log = createLogger('TerminalManager');
 
-// Lazy-load node-pty — native module that may not compile on all platforms (e.g. Windows)
-type NodePty = typeof import('@homebridge/node-pty-prebuilt-multiarch');
-type IPty = import('@homebridge/node-pty-prebuilt-multiarch').IPty;
+// Lazy-load node-pty — native module that may not compile on all platforms (e.g. Windows ARM64).
+// Types are defined inline to avoid TypeScript errors when the package is not installed.
+interface IPty {
+  pid: number;
+  cols: number;
+  rows: number;
+  process: string;
+  onData: (callback: (data: string) => void) => void;
+  onExit: (callback: (e: { exitCode: number; signal?: number }) => void) => void;
+  write: (data: string) => void;
+  resize: (cols: number, rows: number) => void;
+  kill: (signal?: string) => void;
+}
+interface NodePty {
+  spawn: (file: string, args: string[], options: Record<string, unknown>) => IPty;
+}
 let pty: NodePty | null = null;
 try {
   pty = require('@homebridge/node-pty-prebuilt-multiarch');
