@@ -35,8 +35,8 @@ function createConcurrencyLimit(concurrency: number) {
 // ==========================================
 const config = {
     apiBaseUrl: process.env.API_HOOK_URL as string,
-    targetPrefix: "__PROJECT_ID__",
-    markdownPrefix: "markdown/__PROJECT_ID__",
+    targetPrefix: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
+    markdownPrefix: `markdown/${process.env.PROJECT_ID || "__PROJECT_ID__"}`,
 };
 
 if (!config.apiBaseUrl) {

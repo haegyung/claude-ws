@@ -65,10 +65,11 @@ interface OrchestratorDeps {
   /** Callback to start the agent process (runtime singleton, lives outside SDK) */
   startAgent: (params: AgentStartParams) => void;
   defaultBasePath: string;
+  onProjectForceCreated?: (project: any) => Promise<void> | void;
 }
 
 export function createAttemptOrchestrator(deps: OrchestratorDeps) {
-  const { taskService, projectService, attemptService, forceCreateService, sessionManager, startAgent, defaultBasePath } = deps;
+  const { taskService, projectService, attemptService, forceCreateService, sessionManager, startAgent, defaultBasePath, onProjectForceCreated } = deps;
 
   return {
     /**
@@ -89,11 +90,14 @@ export function createAttemptOrchestrator(deps: OrchestratorDeps) {
       }
 
       // Resolve task (lookup or force-create)
-      const task = await this.resolveTask(input);
+      const { task, projectCreatedByForceCreate } = await this.resolveTask(input);
 
       // Resolve project
       const project = await projectService.getById(task.projectId);
       if (!project) throw new AttemptValidationError('Project not found', 404);
+      if (projectCreatedByForceCreate && onProjectForceCreated) {
+        await onProjectForceCreated(project);
+      }
 
       // Create attempt record
       const attempt = await attemptService.create({
@@ -163,18 +167,18 @@ export function createAttemptOrchestrator(deps: OrchestratorDeps) {
     },
 
     /** Resolve task: find existing or force-create project+task */
-    async resolveTask(input: AttemptCreationInput): Promise<any> {
+    async resolveTask(input: AttemptCreationInput): Promise<{ task: any; projectCreatedByForceCreate: boolean }> {
       const { taskId, force_create, projectId, projectName, taskTitle, projectRootPath } = input;
 
       if (!force_create) {
         const task = await taskService.getById(taskId);
         if (!task) throw new AttemptValidationError('Task not found', 404);
-        return task;
+        return { task, projectCreatedByForceCreate: false };
       }
 
       // Force-create: check if task already exists
       const existingTask = await taskService.getById(taskId);
-      if (existingTask) return existingTask;
+      if (existingTask) return { task: existingTask, projectCreatedByForceCreate: false };
 
       // Task doesn't exist — force-create project + task
       if (!projectId) throw new AttemptValidationError('projectId required', 400);
@@ -182,7 +186,7 @@ export function createAttemptOrchestrator(deps: OrchestratorDeps) {
       const result = await forceCreateService.ensureProjectAndTask({
         taskId, projectId, projectName, taskTitle, projectRootPath, defaultBasePath,
       });
-      return result.task;
+      return { task: result.task, projectCreatedByForceCreate: Boolean(result.projectCreated) };
     },
 
     /** Poll attempt status until terminal state or timeout */

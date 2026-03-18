@@ -7,6 +7,7 @@ import { createForceCreateService } from '@agentic-sdk/services/force-create-pro
 import { createProjectService } from '@agentic-sdk/services/project/project-crud';
 import { createTaskService } from '@agentic-sdk/services/task/task-crud-and-reorder';
 import { createAttemptOrchestrator, AttemptValidationError } from '@agentic-sdk/services/attempt/attempt-creation-orchestrator';
+import { setupProjectDefaults } from '@/lib/project-utils';
 
 const orchestrator = createAttemptOrchestrator({
   taskService: createTaskService(db),
@@ -16,6 +17,9 @@ const orchestrator = createAttemptOrchestrator({
   sessionManager,
   startAgent: (params) => agentManager.start(params),
   defaultBasePath: process.env.CLAUDE_WS_USER_CWD || process.cwd(),
+  onProjectForceCreated: async (project) => {
+    await setupProjectDefaults(project.path, project.id);
+  },
 });
 
 // POST /api/attempts - Create a new attempt and start agent execution

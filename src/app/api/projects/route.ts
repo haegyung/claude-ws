@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { createProjectService, ProjectValidationError } from '@agentic-sdk/services/project/project-crud';
+import { setupProjectDefaults } from '@/lib/project-utils';
 
 const projectService = createProjectService(db);
 
@@ -16,8 +17,9 @@ export async function GET() {
 // POST /api/projects - Create a new project
 export async function POST(request: NextRequest) {
   try {
-    const { name, path } = await request.json();
-    const project = await projectService.createProject({ name, path });
+    const { id, name, path, projectId } = await request.json();
+    const project = await projectService.createProject({ id: projectId || id, name, path });
+    await setupProjectDefaults(project.path, project.id);
     return NextResponse.json(project, { status: 201 });
   } catch (error: any) {
     if (error instanceof ProjectValidationError) {
