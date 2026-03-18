@@ -79,7 +79,7 @@ export interface CliQueryResult {
  * Spawns `claude -p <prompt>` with stream-json output and accumulates the response.
  */
 export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult> {
-  const { prompt, cwd, model, onDelta, signal, maxTurns, noTools } = options;
+  const { prompt, cwd, model, onDelta, signal, maxTurns, noTools, lite } = options;
 
   const claudePath = findClaudePath();
   if (!claudePath) {
