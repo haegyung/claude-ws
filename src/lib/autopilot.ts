@@ -58,6 +58,18 @@ export class AutopilotManager {
   /** Track the question listener to avoid duplicate registrations */
   private questionListenerRegistered = false;
 
+  /** Track attempts that have executed restart commands */
+  private restartCommandAttempts = new Set<string>();
+
+  /** Patterns that indicate a server restart command */
+  private readonly RESTART_PATTERNS = [
+    /pm2\s+restart\s+claude-ws/,
+    /pm2\s+restart\s+all/,
+    /service\s+\w+\s+restart/,
+    /systemctl\s+restart/,
+    /restart\.sh/,
+  ];
+
   isEnabled(projectId: string): boolean {
     return this.activeProjects.has(projectId);
   }
@@ -122,6 +134,14 @@ export class AutopilotManager {
   }
 
   /**
+   * Check if a command matches any restart pattern
+   */
+  private isRestartCommand(command: string): boolean {
+    const normalizedCommand = command.toLowerCase().trim();
+    return this.RESTART_PATTERNS.some(pattern => pattern.test(normalizedCommand));
+  }
+
+  /**
    * Register the question auto-answer listener on agentManager.
    * Called once during server init — the listener checks if the attempt
    * belongs to an autopilot task before acting.
@@ -152,6 +172,27 @@ export class AutopilotManager {
 
       agentManager.clearPersistentQuestion(ctx.taskId);
     });
+
+    // Track bash commands to detect restart commands
+    agentManager.on('json', ({ attemptId, data }: { attemptId: string; data: any }) => {
+      const projectId = this.attemptToProject.get(attemptId);
+      if (!projectId || !this.isEnabled(projectId)) return;
+
+      const ctx = this.taskContexts.get(projectId);
+      if (!ctx || ctx.attemptId !== attemptId) return;
+
+      // Check if this is a Bash tool use with a restart command
+      if (data.type === 'tool_use' && data.name === 'Bash' && data.input?.command) {
+        const command = data.input.command;
+        if (this.isRestartCommand(command)) {
+          log.info(
+            { attemptId, taskId: ctx.taskId, command },
+            'Autopilot: detected restart command, will treat exit as completion'
+          );
+          this.restartCommandAttempts.add(attemptId);
+        }
+      }
+    });
   }
 
   async onTaskFinished(
@@ -179,7 +220,27 @@ export class AutopilotManager {
 
     log.info({ taskId, status, projectId }, 'Autopilot: task finished');
 
-    if (status === 'completed') {
+    // Check if this task executed a restart command
+    // If so, treat it as completed even if the status is 'failed'
+    // because the server restart will cause the agent to exit with a non-zero code
+    const ctx = this.taskContexts.get(projectId);
+    const attemptId = ctx?.attemptId || '';
+    const hasRestartCommand = this.restartCommandAttempts.has(attemptId);
+
+    // Clean up restart command tracking
+    if (attemptId) {
+      this.restartCommandAttempts.delete(attemptId);
+    }
+
+    // If the task executed a restart command, treat it as completed
+    const effectiveStatus = (hasRestartCommand && status === 'failed') ? 'completed' : status;
+
+    log.info(
+      { taskId, originalStatus: status, effectiveStatus, hasRestartCommand },
+      'Autopilot: determined effective task status'
+    );
+
+    if (effectiveStatus === 'completed') {
       // Move task to in_review (not done — human reviews autopilot work)
       await db
         .update(schema.tasks)
@@ -214,7 +275,7 @@ export class AutopilotManager {
           this.pickNextTask(projectId, deps);
         }
       }, PICK_DELAY_MS);
-    } else if (status === 'failed') {
+    } else if (effectiveStatus === 'failed') {
       const retries = (this.retryCounts.get(taskId) || 0) + 1;
       this.retryCounts.set(taskId, retries);
 
@@ -260,7 +321,7 @@ export class AutopilotManager {
           }
         }, PICK_DELAY_MS);
       }
-    } else if (status === 'cancelled') {
+    } else if (effectiveStatus === 'cancelled') {
       this.currentTaskId.delete(projectId);
       this.retryCounts.delete(taskId);
       this.emitStatus(projectId, deps);
