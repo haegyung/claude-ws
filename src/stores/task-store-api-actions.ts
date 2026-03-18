@@ -47,13 +47,14 @@ export async function createTaskAction(
   projectId: string,
   title: string,
   description: string | null,
-  get: TaskStoreGetFn
+  get: TaskStoreGetFn,
+  pendingFileIds?: any[]
 ): Promise<Task> {
   try {
     const res = await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, title, description }),
+      body: JSON.stringify({ projectId, title, description, pendingFileIds }),
     });
     if (!res.ok) throw new Error('Failed to create task');
     const task = await res.json();

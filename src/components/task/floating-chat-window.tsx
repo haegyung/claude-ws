@@ -13,6 +13,7 @@ import { TaskStatusBadgeDropdown } from './task-status-badge-dropdown';
 import { useTaskAttemptStreamHandler } from './use-task-attempt-stream-handler';
 import { useShellStore } from '@/stores/shell-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useAttachmentStore } from '@/stores/attachment-store';
 import { useProjectStore } from '@/stores/project-store';
 import { DetachableWindow } from '@/components/ui/detachable-window';
 import { useIsMobileViewport } from '@/hooks/use-mobile-viewport';
@@ -55,6 +56,17 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
       pendingAutoStartFileIds,
     }
   );
+
+  // Restore pending file attachments from DB when task has pendingFileIds
+  const { restoreFromDb } = useAttachmentStore();
+  useEffect(() => {
+    if (task.pendingFileIds) {
+      try {
+        const ids = JSON.parse(task.pendingFileIds) as string[];
+        if (ids.length > 0) restoreFromDb(task.id, ids);
+      } catch { /* ignore */ }
+    }
+  }, [task.id, task.pendingFileIds, restoreFromDb]);
 
   const currentProjectId = activeProjectId || selectedProjectIds[0] || task.projectId;
   const currentProjectPath = currentProjectId ? projects.find(p => p.id === currentProjectId)?.path : undefined;

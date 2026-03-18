@@ -34,6 +34,7 @@ export const tasks = sqliteTable(
     chatInit: integer('chat_init', { mode: 'boolean' }).notNull().default(false),
     lastModel: text('last_model'),
     lastProvider: text('last_provider'),
+    pendingFileIds: text('pending_file_ids'),
     rewindSessionId: text('rewind_session_id'),
     rewindMessageUuid: text('rewind_message_uuid'),
     createdAt: integer('created_at', { mode: 'number' })

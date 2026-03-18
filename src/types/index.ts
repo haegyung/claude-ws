@@ -50,6 +50,7 @@ export interface Task {
   chatInit: boolean;
   lastModel: string | null;  // Last used model for this task
   lastProvider: string | null;  // Last used provider for this task
+  pendingFileIds: string | null;  // JSON array of temp file IDs awaiting first attempt
   createdAt: number;
   updatedAt: number;
 }

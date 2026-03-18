@@ -131,12 +131,18 @@ export function CreateTaskDialog({ open, onOpenChange, onTaskCreated }: CreateTa
         }
       }
 
-      // Get uploaded file IDs from temp task before creating the real task
+      // Get uploaded file IDs and metadata from temp task before creating the real task
       const fileIds = tempTaskId ? getUploadedFileIds(tempTaskId) : [];
+      // Build rich metadata for DB persistence (survives page refresh)
+      const pendingFileMeta = fileIds.length > 0 && tempTaskId
+        ? getPendingFiles(tempTaskId)
+            .filter(f => f.status === 'uploaded' && !f.tempId.startsWith('local-'))
+            .map(f => ({ tempId: f.tempId, originalName: f.originalName, mimeType: f.mimeType, size: f.size }))
+        : undefined;
 
       // Use title if provided, otherwise use message as title
       const taskTitle = title.trim() || chatPrompt.trim();
-      const task = await createTask(selectedProjectId, taskTitle, descriptionForTask);
+      const task = await createTask(selectedProjectId, taskTitle, descriptionForTask, pendingFileMeta);
 
       // Move files from temp task to the real task
       if (tempTaskId && fileIds.length > 0) {

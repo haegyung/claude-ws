@@ -340,19 +340,35 @@ app.prepare().then(async () => {
 
 
           // Process file attachments if any
+          // Merge fileIds from socket payload with pending fileIds stored on the task
+          let allFileIds = [...fileIds];
+          if (task.pendingFileIds) {
+            try {
+              const dbEntries = JSON.parse(task.pendingFileIds) as (string | { tempId: string })[];
+              for (const entry of dbEntries) {
+                const id = typeof entry === 'string' ? entry : entry.tempId;
+                if (id && !allFileIds.includes(id)) allFileIds.push(id);
+              }
+            } catch { /* ignore parse errors */ }
+          }
+
           let filePaths: string[] = [];
-          if (fileIds.length > 0) {
-            log.info(`[Server] Processing ${fileIds.length} file attachments for attempt ${attemptId}`);
-            const processedFiles = await processAttachments(attemptId, fileIds);
+          if (allFileIds.length > 0) {
+            log.info(`[Server] Processing ${allFileIds.length} file attachments for attempt ${attemptId}`);
+            const processedFiles = await processAttachments(attemptId, allFileIds);
             filePaths = processedFiles.map(f => f.absolutePath);
             log.info(`[Server] Processed ${processedFiles.length} files`);
           }
 
           // Update task status to in_progress if it was todo
-          if (task.status === 'todo') {
+          // Also clear pendingFileIds since they've been processed
+          const taskUpdates: any = { updatedAt: Date.now() };
+          if (task.status === 'todo') taskUpdates.status = 'in_progress';
+          if (task.pendingFileIds) taskUpdates.pendingFileIds = null;
+          if (Object.keys(taskUpdates).length > 1) {
             await db
               .update(schema.tasks)
-              .set({ status: 'in_progress', updatedAt: Date.now() })
+              .set(taskUpdates)
               .where(eq(schema.tasks.id, taskId));
           }
 

@@ -43,7 +43,7 @@ export function createTaskService(db: any) {
 
     // --- create ---
 
-    async create(data: { projectId: string; title: string; description?: string; status?: string }) {
+    async create(data: { projectId: string; title: string; description?: string; status?: string; pendingFileIds?: string }) {
       const status = data.status || 'todo';
       const existing = await db.select().from(schema.tasks)
         .where(and(eq(schema.tasks.projectId, data.projectId), eq(schema.tasks.status, status as any)))
@@ -53,7 +53,7 @@ export function createTaskService(db: any) {
 
       const id = generateId('task');
       const now = Date.now();
-      const task = {
+      const task: any = {
         id,
         projectId: data.projectId,
         title: data.title,
@@ -63,6 +63,7 @@ export function createTaskService(db: any) {
         createdAt: now,
         updatedAt: now,
       };
+      if (data.pendingFileIds) task.pendingFileIds = data.pendingFileIds;
       await db.insert(schema.tasks).values(task);
       return task;
     },
