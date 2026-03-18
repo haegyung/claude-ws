@@ -2,13 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
-import { Plus, Settings, Package, X, Sun, Moon, LogOut, Globe, Brain } from 'lucide-react';
+import { Plus, Settings, Package, X, Sun, Moon, LogOut, Globe, Brain, Zap, Columns3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRightSidebarStore } from '@/stores/right-sidebar-store';
 import { useAgentFactoryUIStore } from '@/stores/agent-factory-ui-store';
 import { useSettingsUIStore } from '@/stores/settings-ui-store';
 import { useTunnelStore } from '@/stores/tunnel-store';
+import { useAutopilot } from '@/hooks/use-autopilot';
+import { useProjectStore } from '@/stores/project-store';
+import { usePanelLayoutStore } from '@/stores/panel-layout-store';
+import { KANBAN_COLUMNS } from '@/types';
 import { LanguageSwitcher } from '@/components/ui/language-switcher';
 import { clearStoredApiKey } from '@/components/auth/api-key-dialog';
 import { dispatchAgentProviderConfig } from '@/components/auth/agent-provider-dialog';
@@ -36,11 +40,16 @@ interface RightSidebarProps {
 
 export function RightSidebar({ projectId, onCreateTask, className }: RightSidebarProps) {
   const t = useTranslations('common');
+  const tKanban = useTranslations('kanban');
   const { isOpen, closeRightSidebar } = useRightSidebarStore();
   const { setOpen: setAgentFactoryOpen } = useAgentFactoryUIStore();
   const { setOpen: setSettingsOpen } = useSettingsUIStore();
   const { setWizardOpen, status } = useTunnelStore();
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const { activeProjectId, selectedProjectIds } = useProjectStore();
+  const autopilotProjectId = activeProjectId || (selectedProjectIds.length === 1 ? selectedProjectIds[0] : null);
+  const { enabled: autopilotEnabled, phase: autopilotPhase, toggle: toggleAutopilot } = useAutopilot(autopilotProjectId);
+  const { hiddenColumns, toggleColumn } = usePanelLayoutStore();
   const [mounted, setMounted] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
@@ -122,6 +131,23 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
             </Button>
           </div>
         </div>
+
+        {/* Autopilot toggle */}
+        {autopilotProjectId && (
+          <Button
+            variant={autopilotEnabled ? 'default' : 'outline'}
+            onClick={toggleAutopilot}
+            className={cn(
+              'w-full justify-start gap-2',
+              autopilotEnabled && 'bg-green-600 hover:bg-green-700 text-white'
+            )}
+          >
+            <Zap className={cn('h-4 w-4', autopilotEnabled && autopilotPhase !== 'idle' && 'animate-pulse')} />
+            {autopilotEnabled ? tKanban('autopilotOn') : tKanban('autopilot')}
+          </Button>
+        )}
+
+        <div className="border-t my-1" />
 
         {/* Action buttons */}
         <Button
@@ -214,6 +240,29 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
             <LogOut className="h-4 w-4" />
             {t('logout')}
           </Button>
+        </div>
+
+        {/* Column visibility */}
+        <div className="border-t my-1" />
+        <div className="flex items-center gap-1.5 mb-1">
+          <Columns3 className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium text-muted-foreground">{tKanban('toggleColumns')}</span>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {KANBAN_COLUMNS.map((col) => (
+            <button
+              key={col.id}
+              onClick={() => toggleColumn(col.id)}
+              className={cn(
+                'px-2 py-1 text-xs rounded-md transition-colors',
+                hiddenColumns.includes(col.id)
+                  ? 'text-muted-foreground bg-muted/50'
+                  : 'text-foreground bg-accent'
+              )}
+            >
+              {tKanban(col.titleKey)}
+            </button>
+          ))}
         </div>
       </div>
 

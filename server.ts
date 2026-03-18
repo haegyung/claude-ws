@@ -48,6 +48,8 @@ import { usageTracker } from './src/lib/usage-tracker';
 import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
+import { createAutopilotManager } from './src/lib/autopilot';
+
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -102,6 +104,11 @@ app.prepare().then(async () => {
   }
 
   log.info(`[Server] Restored ${shellManager.runningCount} running shells`);
+
+  // Initialize Autopilot Manager
+  const autopilotManager = createAutopilotManager();
+  await autopilotManager.restoreFromSettings(db, schema);
+  autopilotManager.registerQuestionListener(agentManager);
 
   // Initialize Socket.io
   const io = new SocketIOServer(httpServer, {
@@ -791,6 +798,34 @@ app.prepare().then(async () => {
       if (ack) ack({ alive });
     });
 
+    // Autopilot handlers
+    socket.on('autopilot:enable', async (data: { projectId: string }) => {
+      const { projectId } = data;
+      log.info({ projectId }, '[Autopilot] Enabling autopilot');
+      await autopilotManager.enable(projectId, db, schema);
+      await autopilotManager.planAndReorder(projectId, {
+        db, io, schema, agentManager, sessionManager,
+      });
+    });
+
+    socket.on('autopilot:disable', async (data: { projectId: string }) => {
+      const { projectId } = data;
+      log.info({ projectId }, '[Autopilot] Disabling autopilot');
+      await autopilotManager.disable(projectId, db, schema);
+      io.emit('autopilot:status', {
+        projectId,
+        ...autopilotManager.getStatus(projectId),
+      });
+    });
+
+    socket.on('autopilot:status-request', (data: { projectId: string }) => {
+      const { projectId } = data;
+      socket.emit('autopilot:status', {
+        projectId,
+        ...autopilotManager.getStatus(projectId),
+      });
+    });
+
     socket.on('disconnect', () => {
       log.info(`Client disconnected: ${socket.id}`);
 
@@ -1036,26 +1071,32 @@ app.prepare().then(async () => {
         where: eq(schema.attempts.id, attemptId),
       });
       if (attempt) {
-        // Save to persistent question storage (keyed by taskId, survives agent cleanup)
-        agentManager.setPersistentQuestion(attempt.taskId, {
-          attemptId,
-          toolUseId,
-          questions,
-          timestamp: Date.now(),
-        });
+        // Skip persistent question if autopilot already answered it
+        const alreadyAnswered = !agentManager.hasPendingQuestion(attemptId);
+        if (alreadyAnswered) {
+          log.info({ attemptId }, '[Server] Question already handled (autopilot), skipping persistent storage');
+        } else {
+          // Save to persistent question storage (keyed by taskId, survives agent cleanup)
+          agentManager.setPersistentQuestion(attempt.taskId, {
+            attemptId,
+            toolUseId,
+            questions,
+            timestamp: Date.now(),
+          });
 
-        const task = await db.query.tasks.findFirst({
-          where: eq(schema.tasks.id, attempt.taskId),
-        });
-        io.emit('question:new', {
-          attemptId,
-          taskId: attempt.taskId,
-          taskTitle: task?.title || '',
-          projectId: task?.projectId || '',
-          toolUseId,
-          questions,
-          timestamp: Date.now(),
-        });
+          const task = await db.query.tasks.findFirst({
+            where: eq(schema.tasks.id, attempt.taskId),
+          });
+          io.emit('question:new', {
+            attemptId,
+            taskId: attempt.taskId,
+            taskTitle: task?.title || '',
+            projectId: task?.projectId || '',
+            toolUseId,
+            questions,
+            timestamp: Date.now(),
+          });
+        }
       }
     } catch (err) {
       log.error({ err }, '[Server] Failed to emit global question:new');
@@ -1397,6 +1438,13 @@ app.prepare().then(async () => {
     // Global event for all clients to track completed tasks
     if (attempt?.taskId) {
       io.emit('task:finished', { taskId: attempt.taskId, status });
+    }
+
+    // Autopilot: handle task completion for auto-processing
+    if (attempt?.taskId && status !== 'cancelled') {
+      await autopilotManager.onTaskFinished(attempt.taskId, status, {
+        db, io, schema, agentManager, sessionManager,
+      });
     }
 
     // Auto-compact check: if context exceeded threshold and auto-compact is enabled

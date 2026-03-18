@@ -114,7 +114,17 @@
     "deleteTask": "Xóa nhiệm vụ",
     "moveTo": "Di chuyển đến",
     "duplicate": "Nhân bản",
-    "delete": "Xóa"
+    "delete": "Xóa",
+    "autopilot": "Tự động",
+    "autopilotOn": "Tự động đã bật",
+    "autopilotOff": "Tự động đã tắt",
+    "autopilotPlanning": "Đang phân tích phụ thuộc...",
+    "autopilotProcessing": "Đang xử lý: {title}",
+    "autopilotQueue": "{count} nhiệm vụ trong hàng đợi",
+    "autopilotRetrying": "Thử lại ({count}/{max})",
+    "autopilotSkipped": "Bỏ qua (lỗi {max} lần): {title}",
+    "autopilotIdle": "Đã xử lý xong tất cả",
+    "autopilotProgress": "{processed}/{total} nhiệm vụ xong"
   },
   "task": {
     "title": "Tiêu đề",
@@ -425,7 +435,9 @@
     "configureAuthDescription": "Cấu hình cách xác thực với API Claude",
     "setUpRemoteAccess": "Thiết lập xác thực cho truy cập từ xa",
     "projectSettings": "Cài đặt dự án",
-    "noProjectsAvailable": "Không có dự án nào khả dụng"
+    "noProjectsAvailable": "Không có dự án nào khả dụng",
+    "autopilotEnable": "Bật Autopilot",
+    "autopilotDescription": "Tự động chọn và xử lý các nhiệm vụ từ cột Todo. Agent sẽ phân tích phụ thuộc, sắp xếp thứ tự tối ưu, và xử lý từng nhiệm vụ với tối đa 3 lần thử lại khi thất bại."
   },
   "auth": {
     "apiKeyRequired": "Cần API Key",
