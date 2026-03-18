@@ -93,13 +93,19 @@ export async function POST(request: NextRequest) {
     // Build prompt for Claude
     const prompt = buildCommitMessagePrompt(diffOutput);
 
-    // Call Claude CLI to generate commit message
+    // Call Claude CLI to generate commit message (with timeout)
     try {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), 60000); // 60s timeout
       const result = await cliQuery({
         prompt,
         cwd: resolvedPath,
         model: 'claude-haiku-4-5-20251001', // Use Haiku for fast commit messages
-      });
+        maxTurns: 1,
+        noTools: true, // No tools needed - just generate text
+        lite: true, // Skip MCP servers and session persistence for faster startup
+        signal: abortController.signal,
+      }).finally(() => clearTimeout(timeout));
 
       const { title, description } = extractCommitMessage(result.text);
 

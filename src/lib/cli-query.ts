@@ -65,6 +65,8 @@ export interface CliQueryOptions {
   onDelta?: (text: string) => void;
   signal?: AbortSignal;
   maxTurns?: number;
+  noTools?: boolean; // Disable all tools
+  lite?: boolean; // Skip MCP servers and session persistence for faster startup
 }
 
 export interface CliQueryResult {
@@ -77,7 +79,7 @@ export interface CliQueryResult {
  * Spawns `claude -p <prompt>` with stream-json output and accumulates the response.
  */
 export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult> {
-  const { prompt, cwd, model, onDelta, signal, maxTurns } = options;
+  const { prompt, cwd, model, onDelta, signal, maxTurns, noTools } = options;
 
   const claudePath = findClaudePath();
   if (!claudePath) {
@@ -97,6 +99,14 @@ export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult
 
   if (maxTurns) {
     args.push('--max-turns', String(maxTurns));
+  }
+
+  if (noTools) {
+    args.push('--tools', '');
+  }
+
+  if (lite) {
+    args.push('--mcp-config', '{"mcpServers":{}}', '--strict-mcp-config', '--no-session-persistence');
   }
 
   return new Promise<CliQueryResult>((resolve, reject) => {
