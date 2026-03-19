@@ -1,6 +1,7 @@
 import { createLogger } from './logger';
 import { nanoid } from 'nanoid';
 import { eq, and, asc } from 'drizzle-orm';
+import { validateAttemptCompletion } from './autopilot-attempt-completion-validator';
 
 const log = createLogger('Autopilot');
 
@@ -19,7 +20,6 @@ interface AutopilotStatus {
   enabled: boolean;
   phase: 'idle' | 'planning' | 'processing';
   currentTaskId: string | null;
-  todoCount: number;
   processedCount: number;
   retryCount: number;
   skippedTaskIds: string[];
@@ -32,36 +32,31 @@ interface TaskContext {
   projectId: string;
   title: string;
   description: string;
-  /** All todo tasks at the time autopilot started — for big-picture awareness */
   allTodoTitles: string[];
-  /** Tasks already completed in this autopilot run */
   completedTitles: string[];
 }
 
 export class AutopilotManager {
+  /** Workspace-wide autopilot toggle — default enabled */
+  private _enabled = true;
+
   private retryCounts = new Map<string, number>();
-  private activeProjects = new Set<string>();
   private currentTaskId = new Map<string, string>();
   private processedCounts = new Map<string, number>();
   private skippedTaskIds = new Map<string, string[]>();
   private phase = new Map<string, 'idle' | 'planning' | 'processing'>();
 
-  /** Master agent context per project — knows what's being done and progress */
+  /** Master agent context per project */
   private taskContexts = new Map<string, TaskContext>();
 
   /** Track attemptId → projectId for question handler lookup */
   private attemptToProject = new Map<string, string>();
 
-  /** Stores deps so question handler can access them */
   private deps: AutopilotDeps | null = null;
-
-  /** Track the question listener to avoid duplicate registrations */
+  private runtimeDeps: { io: any; agentManager: any; sessionManager: any } | null = null;
   private questionListenerRegistered = false;
-
-  /** Track attempts that have executed restart commands */
   private restartCommandAttempts = new Set<string>();
 
-  /** Patterns that indicate a server restart command */
   private readonly RESTART_PATTERNS = [
     /pm2\s+restart\s+claude-ws/,
     /pm2\s+restart\s+all/,
@@ -70,21 +65,28 @@ export class AutopilotManager {
     /restart\.sh/,
   ];
 
-  isEnabled(projectId: string): boolean {
-    return this.activeProjects.has(projectId);
+  /** Check if autopilot is enabled (workspace-wide) */
+  isEnabled(): boolean {
+    return this._enabled;
   }
 
-  async enable(projectId: string, db: any, schema: any): Promise<void> {
-    this.activeProjects.add(projectId);
-    this.processedCounts.set(projectId, 0);
-    this.skippedTaskIds.set(projectId, []);
-    this.phase.set(projectId, 'idle');
+  /** Set runtime deps (io, agentManager, sessionManager) — called once from server.ts */
+  setDeps(deps: { io: any; agentManager: any; sessionManager: any }): void {
+    this.runtimeDeps = deps;
+  }
 
-    // Persist to appSettings
+  /** Get runtime deps for use by Next.js API routes */
+  getDeps(): { io: any; agentManager: any; sessionManager: any } | null {
+    return this.runtimeDeps;
+  }
+
+  async enable(db: any, schema: any): Promise<void> {
+    this._enabled = true;
+
     await db
       .insert(schema.appSettings)
       .values({
-        key: `autopilot_enabled_${projectId}`,
+        key: 'autopilot_enabled',
         value: 'true',
         updatedAt: Date.now(),
       })
@@ -93,43 +95,60 @@ export class AutopilotManager {
         set: { value: 'true', updatedAt: Date.now() },
       });
 
-    log.info({ projectId }, 'Autopilot enabled');
+    log.info('Autopilot enabled (workspace-wide)');
   }
 
-  async disable(projectId: string, db: any, schema: any): Promise<void> {
-    this.activeProjects.delete(projectId);
-    this.currentTaskId.delete(projectId);
-    this.phase.set(projectId, 'idle');
+  async disable(db: any, schema: any): Promise<void> {
+    this._enabled = false;
 
-    // Clean up context
-    const ctx = this.taskContexts.get(projectId);
-    if (ctx?.attemptId) {
-      this.restartCommandAttempts.delete(ctx.attemptId);
+    // Clean up all project contexts
+    for (const [, ctx] of this.taskContexts) {
+      if (ctx.attemptId) {
+        this.restartCommandAttempts.delete(ctx.attemptId);
+      }
     }
-    this.taskContexts.delete(projectId);
+    this.currentTaskId.clear();
+    this.taskContexts.clear();
+    this.phase.clear();
 
-    // Remove from appSettings
     await db
-      .delete(schema.appSettings)
-      .where(eq(schema.appSettings.key, `autopilot_enabled_${projectId}`));
+      .insert(schema.appSettings)
+      .values({
+        key: 'autopilot_enabled',
+        value: 'false',
+        updatedAt: Date.now(),
+      })
+      .onConflictDoUpdate({
+        target: schema.appSettings.key,
+        set: { value: 'false', updatedAt: Date.now() },
+      });
 
-    log.info({ projectId }, 'Autopilot disabled');
+    log.info('Autopilot disabled (workspace-wide)');
   }
 
   async restoreFromSettings(db: any, schema: any): Promise<void> {
     try {
-      const allSettings = await db
+      const setting = await db
         .select()
-        .from(schema.appSettings);
+        .from(schema.appSettings)
+        .where(eq(schema.appSettings.key, 'autopilot_enabled'))
+        .limit(1);
 
-      for (const setting of allSettings) {
-        if (setting.key.startsWith('autopilot_enabled_') && setting.value === 'true') {
-          const projectId = setting.key.replace('autopilot_enabled_', '');
-          this.activeProjects.add(projectId);
-          this.processedCounts.set(projectId, 0);
-          this.skippedTaskIds.set(projectId, []);
-          this.phase.set(projectId, 'idle');
-          log.info({ projectId }, 'Restored autopilot state from settings');
+      if (setting.length > 0) {
+        this._enabled = setting[0].value === 'true';
+        log.info({ enabled: this._enabled }, 'Restored autopilot state from DB');
+      } else {
+        // No DB setting yet — keep default (enabled)
+        log.info('No autopilot setting in DB, using default: enabled');
+      }
+
+      // Clean up old per-project keys (migration)
+      const allSettings = await db.select().from(schema.appSettings);
+      for (const s of allSettings) {
+        if (s.key.startsWith('autopilot_enabled_')) {
+          await db.delete(schema.appSettings)
+            .where(eq(schema.appSettings.key, s.key));
+          log.info({ key: s.key }, 'Cleaned up old per-project autopilot key');
         }
       }
     } catch (error) {
@@ -137,19 +156,11 @@ export class AutopilotManager {
     }
   }
 
-  /**
-   * Check if a command matches any restart pattern
-   */
   private isRestartCommand(command: string): boolean {
     const normalizedCommand = command.toLowerCase().trim();
     return this.RESTART_PATTERNS.some(pattern => pattern.test(normalizedCommand));
   }
 
-  /**
-   * Register the question auto-answer listener on agentManager.
-   * Called once during server init — the listener checks if the attempt
-   * belongs to an autopilot task before acting.
-   */
   registerQuestionListener(agentManager: any): void {
     if (this.questionListenerRegistered) return;
     this.questionListenerRegistered = true;
@@ -159,16 +170,14 @@ export class AutopilotManager {
       toolUseId: string;
       questions: unknown[];
     }) => {
+      if (!this._enabled) return;
+
       const projectId = this.attemptToProject.get(attemptId);
-      if (!projectId || !this.isEnabled(projectId)) return;
+      if (!projectId) return;
 
       const ctx = this.taskContexts.get(projectId);
       if (!ctx || ctx.attemptId !== attemptId) return;
 
-      // Autopilot mode: don't answer via writeToolResult — CLI already auto-handles
-      // AskUserQuestion with its own tool_result. Writing a second tool_result causes
-      // duplicate user messages → API 400 "assistant message prefill" error.
-      // Instead, just clear persistent question so UI doesn't show pending state.
       log.info(
         { attemptId, taskId: ctx.taskId, questionCount: questions?.length },
         'Autopilot: suppressing question (CLI auto-handles)'
@@ -177,15 +186,15 @@ export class AutopilotManager {
       agentManager.clearPersistentQuestion(ctx.taskId);
     });
 
-    // Track bash commands to detect restart commands
     agentManager.on('json', ({ attemptId, data }: { attemptId: string; data: any }) => {
+      if (!this._enabled) return;
+
       const projectId = this.attemptToProject.get(attemptId);
-      if (!projectId || !this.isEnabled(projectId)) return;
+      if (!projectId) return;
 
       const ctx = this.taskContexts.get(projectId);
       if (!ctx || ctx.attemptId !== attemptId) return;
 
-      // Check if this is a Bash tool use with a restart command
       if (data.type === 'tool_use' && data.name === 'Bash' && data.input?.command) {
         const command = data.input.command;
         if (this.isRestartCommand(command)) {
@@ -207,7 +216,8 @@ export class AutopilotManager {
     const { db, schema } = deps;
     this.deps = deps;
 
-    // Find which project this task belongs to
+    if (!this._enabled) return;
+
     const task = await db.query.tasks.findFirst({
       where: eq(schema.tasks.id, taskId),
     });
@@ -216,27 +226,48 @@ export class AutopilotManager {
 
     const projectId = task.projectId;
 
-    // Check if autopilot is enabled for this project
-    if (!this.isEnabled(projectId)) return;
+    // If this task wasn't tracked by autopilot (manually started), still handle completion
+    const isAutopilotTask = this.currentTaskId.get(projectId) === taskId;
 
-    // Check if this is the current autopilot task
-    if (this.currentTaskId.get(projectId) !== taskId) return;
+    if (!isAutopilotTask) {
+      // Manually started task — validate before moving to in_review
+      if (status === 'completed' && task.status === 'in_progress') {
+        const validation = await this.validateAttemptCompletion(taskId, deps);
+
+        if (validation.valid) {
+          await db
+            .update(schema.tasks)
+            .set({ status: 'in_review', updatedAt: Date.now() })
+            .where(eq(schema.tasks.id, taskId));
+          log.info({ taskId, projectId }, 'Autopilot: manually-started task → in_review');
+          await this.emitTaskUpdated(taskId, deps);
+        } else {
+          log.info(
+            { taskId, projectId, reason: validation.reason },
+            'Autopilot: manually-started task incomplete, resuming',
+          );
+          // Resume by creating a new attempt
+          this.currentTaskId.set(projectId, taskId);
+          setTimeout(() => {
+            if (this._enabled) {
+              this.startTask(task, deps);
+            }
+          }, PICK_DELAY_MS);
+        }
+      }
+      return;
+    }
 
     log.info({ taskId, status, projectId }, 'Autopilot: task finished');
 
-    // Check if this task executed a restart command
-    // If so, treat it as completed even if the status is 'failed'
-    // because the server restart will cause the agent to exit with a non-zero code
     const ctx = this.taskContexts.get(projectId);
     const attemptId = ctx?.attemptId || '';
     const hasRestartCommand = this.restartCommandAttempts.has(attemptId);
 
-    // Clean up restart command tracking
     if (attemptId) {
       this.restartCommandAttempts.delete(attemptId);
     }
 
-    // If the task executed a restart command, treat it as completed
     const effectiveStatus = (hasRestartCommand && status === 'failed') ? 'completed' : status;
 
     log.info(
@@ -245,17 +276,53 @@ export class AutopilotManager {
     );
 
     if (effectiveStatus === 'completed') {
-      // Move task to in_review (not done — human reviews autopilot work)
+      // Validate the attempt actually did meaningful work
+      const validation = await this.validateAttemptCompletion(taskId, deps);
+
+      if (!validation.valid) {
+        // Treat as failed — retry instead of moving to in_review
+        log.info(
+          { taskId, projectId, reason: validation.reason },
+          'Autopilot: attempt completed but validation failed, retrying',
+        );
+
+        const retries = (this.retryCounts.get(taskId) || 0) + 1;
+        this.retryCounts.set(taskId, retries);
+
+        if (retries < MAX_RETRIES) {
+          setTimeout(() => {
+            if (this._enabled) {
+              this.startTask(task, deps);
+            }
+          }, PICK_DELAY_MS);
+        } else {
+          log.info({ taskId, retries }, 'Autopilot: max retries after validation failure, skipping');
+          await db
+            .update(schema.tasks)
+            .set({ status: 'todo', updatedAt: Date.now() })
+            .where(eq(schema.tasks.id, taskId));
+          this.currentTaskId.delete(projectId);
+          this.retryCounts.delete(taskId);
+          const skipped = this.skippedTaskIds.get(projectId) || [];
+          skipped.push(taskId);
+          this.skippedTaskIds.set(projectId, skipped);
+          await this.emitTaskUpdated(taskId, deps);
+          setTimeout(() => {
+            if (this._enabled) {
+              this.pickNextTask(projectId, deps);
+            }
+          }, PICK_DELAY_MS);
+        }
+        return;
+      }
+
       await db
         .update(schema.tasks)
         .set({ status: 'in_review', updatedAt: Date.now() })
         .where(eq(schema.tasks.id, taskId));
 
-      // Track completed title for master context
-      const ctx = this.taskContexts.get(projectId);
       if (ctx) {
         ctx.completedTitles.push(task.title);
-        // Remove from allTodoTitles
         const idx = ctx.allTodoTitles.indexOf(task.title);
         if (idx !== -1) ctx.allTodoTitles.splice(idx, 1);
       }
@@ -265,17 +332,15 @@ export class AutopilotManager {
       this.attemptToProject.delete(ctx?.attemptId || '');
       this.processedCounts.set(
         projectId,
-        (this.processedCounts.get(projectId) || 0) + 1
+        (this.processedCounts.get(projectId) || 0) + 1,
       );
 
       log.info({ taskId, projectId }, 'Autopilot: task → in_review, picking next');
 
       await this.emitTaskUpdated(taskId, deps);
-      this.emitStatus(projectId, deps);
 
-      // Delay before picking next task
       setTimeout(() => {
-        if (this.isEnabled(projectId)) {
+        if (this._enabled) {
           this.pickNextTask(projectId, deps);
         }
       }, PICK_DELAY_MS);
@@ -289,16 +354,14 @@ export class AutopilotManager {
           'Autopilot: retrying task'
         );
 
-        this.emitStatus(projectId, deps);
+  
 
-        // Retry after delay - start fresh (no session resume)
         setTimeout(() => {
-          if (this.isEnabled(projectId)) {
+          if (this._enabled) {
             this.startTask(task, deps);
           }
         }, PICK_DELAY_MS);
       } else {
-        // Max retries reached - move back to todo and skip
         log.info(
           { taskId, retries },
           'Autopilot: max retries reached, skipping task'
@@ -317,10 +380,10 @@ export class AutopilotManager {
         this.skippedTaskIds.set(projectId, skipped);
 
         await this.emitTaskUpdated(taskId, deps);
-        this.emitStatus(projectId, deps);
+  
 
         setTimeout(() => {
-          if (this.isEnabled(projectId)) {
+          if (this._enabled) {
             this.pickNextTask(projectId, deps);
           }
         }, PICK_DELAY_MS);
@@ -328,7 +391,7 @@ export class AutopilotManager {
     } else if (effectiveStatus === 'cancelled') {
       this.currentTaskId.delete(projectId);
       this.retryCounts.delete(taskId);
-      this.emitStatus(projectId, deps);
+
     }
   }
 
@@ -336,14 +399,11 @@ export class AutopilotManager {
     const { db, schema, io, agentManager } = deps;
     this.deps = deps;
 
-    // Register question listener if not already done
     this.registerQuestionListener(agentManager);
 
     this.phase.set(projectId, 'planning');
-    this.emitStatus(projectId, deps);
 
     try {
-      // Query all todo tasks for this project
       const todoTasks = await db
         .select()
         .from(schema.tasks)
@@ -355,7 +415,6 @@ export class AutopilotManager {
         )
         .orderBy(asc(schema.tasks.position));
 
-      // Initialize master context with all todo titles
       const existingCtx = this.taskContexts.get(projectId);
       const completedSoFar = existingCtx?.completedTitles || [];
       this.taskContexts.set(projectId, {
@@ -371,15 +430,14 @@ export class AutopilotManager {
       if (todoTasks.length <= 1) {
         log.info({ projectId, count: todoTasks.length }, 'Autopilot: skipping planning (<=1 tasks)');
         this.phase.set(projectId, 'processing');
-        this.emitStatus(projectId, deps);
+  
 
-        if (this.isEnabled(projectId)) {
+        if (this._enabled) {
           this.pickNextTask(projectId, deps);
         }
         return;
       }
 
-      // Build prompt for planning
       const taskList = todoTasks
         .map(
           (t: any, i: number) =>
@@ -397,7 +455,6 @@ Return ONLY a JSON array of task IDs in the recommended execution order, like:
 
 Do not include any other text, just the JSON array.`;
 
-      // Get project for path
       const project = await db.query.projects.findFirst({
         where: eq(schema.projects.id, projectId),
       });
@@ -408,11 +465,9 @@ Do not include any other text, just the JSON array.`;
         return;
       }
 
-      // Spawn one-shot agent for planning
       const planAttemptId = nanoid();
       const planTaskId = nanoid();
 
-      // Create a temporary internal task for planning
       await db.insert(schema.tasks).values({
         id: planTaskId,
         projectId,
@@ -437,7 +492,6 @@ Do not include any other text, just the JSON array.`;
         outputSchema: null,
       });
 
-      // Listen for the planning agent to finish
       const onPlanExit = async ({ attemptId: exitAttemptId, code }: { attemptId: string; code: number | null }) => {
         if (exitAttemptId !== planAttemptId) return;
         agentManager.removeListener('exit', onPlanExit);
@@ -488,7 +542,6 @@ Do not include any other text, just the JSON array.`;
                 .where(eq(schema.tasks.id, orderedIds[i]));
             }
 
-            // Update master context with reordered titles
             const reorderedTitles = orderedIds.map((id: string) => {
               const t = todoTasks.find((task: any) => task.id === id);
               return t?.title || id;
@@ -496,7 +549,6 @@ Do not include any other text, just the JSON array.`;
             const ctx = this.taskContexts.get(projectId);
             if (ctx) ctx.allTodoTitles = reorderedTitles;
 
-            // Emit updates for all reordered tasks
             for (const id of orderedIds) {
               await this.emitTaskUpdated(id, deps);
             }
@@ -509,7 +561,6 @@ Do not include any other text, just the JSON array.`;
             log.warn({ projectId }, 'Autopilot: could not parse planning response, keeping original order');
           }
 
-          // Clean up internal planning task
           await db.delete(schema.attempts).where(eq(schema.attempts.taskId, planTaskId));
           await db.delete(schema.tasks).where(eq(schema.tasks.id, planTaskId));
 
@@ -521,15 +572,9 @@ Do not include any other text, just the JSON array.`;
           } catch {}
         }
 
-        // Emit planned event
         this.phase.set(projectId, 'processing');
-        io.emit('autopilot:planned', {
-          projectId,
-          ...this.getStatus(projectId, deps),
-        });
 
-        // Start processing
-        if (this.isEnabled(projectId)) {
+        if (this._enabled) {
           this.pickNextTask(projectId, deps);
         }
       };
@@ -547,9 +592,9 @@ Do not include any other text, just the JSON array.`;
     } catch (error) {
       log.error({ error, projectId }, 'Autopilot: planning failed');
       this.phase.set(projectId, 'processing');
-      this.emitStatus(projectId, deps);
 
-      if (this.isEnabled(projectId)) {
+
+      if (this._enabled) {
         this.pickNextTask(projectId, deps);
       }
     }
@@ -558,9 +603,9 @@ Do not include any other text, just the JSON array.`;
   async pickNextTask(projectId: string, deps: AutopilotDeps): Promise<void> {
     const { db, schema } = deps;
 
-    if (!this.isEnabled(projectId)) return;
+    if (!this._enabled) return;
 
-    // Don't pick if already processing a task
+    // Don't pick if already processing a task in this project
     if (this.currentTaskId.has(projectId)) return;
 
     const skipped = this.skippedTaskIds.get(projectId) || [];
@@ -581,9 +626,9 @@ Do not include any other text, just the JSON array.`;
     );
 
     if (availableTasks.length === 0) {
-      log.info({ projectId }, 'Autopilot: no more tasks to process');
+      log.info({ projectId }, 'Autopilot: no more tasks in this project');
       this.phase.set(projectId, 'idle');
-      this.emitStatus(projectId, deps);
+
       return;
     }
 
@@ -602,10 +647,8 @@ Do not include any other text, just the JSON array.`;
 
     const projectId = task.projectId;
 
-    // Register question listener if not already done
     this.registerQuestionListener(agentManager);
 
-    // Get project
     const project = await db.query.projects.findFirst({
       where: eq(schema.projects.id, projectId),
     });
@@ -615,11 +658,9 @@ Do not include any other text, just the JSON array.`;
       return;
     }
 
-    // Create attempt
     const attemptId = nanoid();
     const basePrompt = task.description || task.title;
 
-    // Build autopilot-aware prompt: instruct agent to NOT use AskUserQuestion
     const ctx = this.taskContexts.get(projectId);
     const progressInfo = ctx && ctx.completedTitles.length > 0
       ? `\n\nTasks already completed: ${ctx.completedTitles.join(', ')}`
@@ -648,7 +689,6 @@ Do not include any other text, just the JSON array.`;
       outputSchema: null,
     });
 
-    // Update task status to in_progress
     await db
       .update(schema.tasks)
       .set({ status: 'in_progress', updatedAt: Date.now() })
@@ -656,12 +696,10 @@ Do not include any other text, just the JSON array.`;
 
     await this.emitTaskUpdated(task.id, deps);
 
-    // Track current task + master context
     this.currentTaskId.set(projectId, task.id);
     this.phase.set(projectId, 'processing');
     this.attemptToProject.set(attemptId, projectId);
 
-    // Update master context for this task
     const taskCtx = this.taskContexts.get(projectId) || {
       taskId: '',
       attemptId: '',
@@ -677,7 +715,6 @@ Do not include any other text, just the JSON array.`;
     taskCtx.description = task.description || '';
     this.taskContexts.set(projectId, taskCtx);
 
-    // Start agent (fresh session - no resume for autopilot retries)
     agentManager.start({
       attemptId,
       projectPath: project.path,
@@ -689,38 +726,49 @@ Do not include any other text, just the JSON array.`;
       'Autopilot: started task'
     );
 
-    // Emit events
-    io.emit('autopilot:task-started', {
-      projectId,
-      taskId: task.id,
-      attemptId,
-      ...this.getStatus(projectId, deps),
-    });
     io.emit('task:started', { taskId: task.id });
   }
 
-  getStatus(projectId: string, deps?: AutopilotDeps): AutopilotStatus {
+  /** Get workspace-wide autopilot status */
+  getStatus(): AutopilotStatus {
+    // Aggregate phase: processing > planning > idle
+    let aggregatedPhase: 'idle' | 'planning' | 'processing' = 'idle';
+    for (const [, p] of this.phase) {
+      if (p === 'processing') { aggregatedPhase = 'processing'; break; }
+      if (p === 'planning') aggregatedPhase = 'planning';
+    }
+
+    // Sum processed counts across projects
+    let totalProcessed = 0;
+    for (const [, count] of this.processedCounts) {
+      totalProcessed += count;
+    }
+
+    // Aggregate skipped task IDs
+    const allSkipped: string[] = [];
+    for (const [, ids] of this.skippedTaskIds) {
+      allSkipped.push(...ids);
+    }
+
+    // Get current task (first active one found)
+    let currentTask: string | null = null;
+    for (const [, taskId] of this.currentTaskId) {
+      currentTask = taskId;
+      break;
+    }
+
     return {
-      enabled: this.isEnabled(projectId),
-      phase: this.phase.get(projectId) || 'idle',
-      currentTaskId: this.currentTaskId.get(projectId) || null,
-      todoCount: 0,
-      processedCount: this.processedCounts.get(projectId) || 0,
-      retryCount: this.currentTaskId.has(projectId)
-        ? this.retryCounts.get(this.currentTaskId.get(projectId)!) || 0
+      enabled: this._enabled,
+      phase: aggregatedPhase,
+      currentTaskId: currentTask,
+      processedCount: totalProcessed,
+      retryCount: currentTask
+        ? this.retryCounts.get(currentTask) || 0
         : 0,
-      skippedTaskIds: this.skippedTaskIds.get(projectId) || [],
+      skippedTaskIds: allSkipped,
     };
   }
 
-  private emitStatus(projectId: string, deps: AutopilotDeps): void {
-    deps.io.emit('autopilot:status', {
-      projectId,
-      ...this.getStatus(projectId, deps),
-    });
-  }
-
-  /** Emit task:updated so client kanban board updates in realtime */
   private async emitTaskUpdated(taskId: string, deps: AutopilotDeps): Promise<void> {
     const task = await deps.db.query.tasks.findFirst({
       where: eq(deps.schema.tasks.id, taskId),
@@ -729,8 +777,31 @@ Do not include any other text, just the JSON array.`;
       deps.io.emit('task:updated', task);
     }
   }
+
+  /** Validate whether an attempt actually did meaningful work */
+  async validateAttemptCompletion(
+    taskId: string,
+    deps: AutopilotDeps,
+  ): Promise<{ valid: boolean; reason: string }> {
+    return validateAttemptCompletion(taskId, deps.db, deps.schema);
+  }
 }
 
+// Export singleton instance (global for cross-module access in bundled/unbundled contexts)
+const globalKey = '__claude_autopilot_manager__' as const;
+
+declare global {
+  var __claude_autopilot_manager__: AutopilotManager | undefined;
+}
+
+export const autopilotManager: AutopilotManager =
+  (globalThis as any)[globalKey] ?? new AutopilotManager();
+
+if (!(globalThis as any)[globalKey]) {
+  (globalThis as any)[globalKey] = autopilotManager;
+}
+
+/** @deprecated Use `autopilotManager` singleton directly */
 export function createAutopilotManager(): AutopilotManager {
-  return new AutopilotManager();
+  return autopilotManager;
 }

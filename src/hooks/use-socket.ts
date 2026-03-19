@@ -1,40 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
-import { createLogger } from '@/lib/logger';
+import { useGlobalSocket } from '@/components/providers/socket-provider';
 
-const log = createLogger('SocketHook');
-
+/**
+ * Access the global Socket.IO instance.
+ * Thin wrapper around useGlobalSocket for backward compatibility.
+ */
 export function useSocket() {
-  const socketRef = useRef<Socket | null>(null);
-
-  useEffect(() => {
-    // Create socket connection
-    const socket = io({
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity,
-    });
-
-    socketRef.current = socket;
-
-    socket.on('connect', () => {
-      log.debug({ socketId: socket.id }, 'Socket connected');
-    });
-
-    socket.on('disconnect', () => {
-      log.debug('Socket disconnected');
-    });
-
-    socket.on('error', (error) => {
-      log.error({ error }, 'Socket error');
-    });
-
-    // Cleanup on unmount
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
-
-  return socketRef.current;
+  return useGlobalSocket();
 }

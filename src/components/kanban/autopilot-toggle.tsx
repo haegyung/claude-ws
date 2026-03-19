@@ -3,21 +3,17 @@
 import { useTranslations } from 'next-intl';
 import { Zap } from 'lucide-react';
 import { useAutopilot } from '@/hooks/use-autopilot';
-import { useProjectStore } from '@/stores/project-store';
 import { cn } from '@/lib/utils';
 
 export function AutopilotToggle() {
   const t = useTranslations('kanban');
-  const { activeProjectId, selectedProjectIds } = useProjectStore();
-  const projectId = activeProjectId || (selectedProjectIds.length === 1 ? selectedProjectIds[0] : null);
-  const { enabled, phase, processedCount, todoCount, toggle } = useAutopilot(projectId);
+  const { enabled, phase, processedCount, toggle } = useAutopilot();
 
   const getStatusText = () => {
     if (!enabled) return t('autopilot');
     if (phase === 'planning') return t('autopilotPlanning');
     if (phase === 'processing') {
-      const total = processedCount + todoCount;
-      if (total > 0) return t('autopilotProgress', { processed: processedCount, total });
+      if (processedCount > 0) return t('autopilotOn');
       return t('autopilotOn');
     }
     return t('autopilotIdle');

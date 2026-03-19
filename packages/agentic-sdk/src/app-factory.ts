@@ -41,6 +41,8 @@ import shellsDomainRoutes from './routes/shells/index';
 import commandsDomainRoutes from './routes/commands/index';
 import uploadsDomainRoutes from './routes/uploads/index';
 import agentFactoryDomainRoutes from './routes/agent-factory/index';
+import autopilotDomainRoutes from './routes/autopilot/index';
+import type { AutopilotService } from './services/autopilot/autopilot-toggle-and-status';
 
 export async function createApp(envConfig: EnvConfig) {
   const app = await buildFastifyApp(envConfig);
@@ -144,6 +146,7 @@ export async function createApp(envConfig: EnvConfig) {
   await app.register(shellsDomainRoutes);
   await app.register(commandsDomainRoutes);
   await app.register(agentFactoryDomainRoutes);
+  await app.register(autopilotDomainRoutes);
 
   return app;
 }
@@ -171,6 +174,7 @@ declare module 'fastify' {
       attemptWorkflow: ReturnType<typeof createAttemptWorkflowService>;
       fileTreeBuilder: ReturnType<typeof createFileTreeBuilderService>;
       agentFactoryFs: ReturnType<typeof createAgentFactoryFilesystemService>;
+      autopilot?: AutopilotService;
     };
     agentManager: AgentManager;
   }

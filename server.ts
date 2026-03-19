@@ -40,7 +40,7 @@ import { createLogger } from './src/lib/logger';
 import { safeCompare } from './src/lib/timing-safe-compare';
 
 const log = createLogger('Server');
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import type { AttemptStatus } from './src/types';
 import { processAttachments } from './src/lib/file-processor';
@@ -48,7 +48,8 @@ import { usageTracker } from './src/lib/usage-tracker';
 import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
-import { createAutopilotManager } from './src/lib/autopilot';
+import { autopilotManager } from './src/lib/autopilot';
+import { AutopilotWorker } from './src/lib/autopilot-worker';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
@@ -85,6 +86,8 @@ app.prepare().then(async () => {
       }
     }
 
+    // Autopilot API now handled by Next.js routes (src/app/api/autopilot/)
+
     handle(req, res, parsedUrl);
   });
 
@@ -105,8 +108,7 @@ app.prepare().then(async () => {
 
   log.info(`[Server] Restored ${shellManager.runningCount} running shells`);
 
-  // Initialize Autopilot Manager
-  const autopilotManager = createAutopilotManager();
+  // Initialize Autopilot Manager (module-level singleton)
   await autopilotManager.restoreFromSettings(db, schema);
   autopilotManager.registerQuestionListener(agentManager);
 
@@ -121,6 +123,16 @@ app.prepare().then(async () => {
     pingInterval: 10000,
     pingTimeout: 10000,
   });
+
+  // Inject runtime deps so Next.js API routes can use autopilotManager
+  autopilotManager.setDeps({ io, agentManager, sessionManager });
+
+  // Initialize Autopilot Worker — periodic sweep for orphaned tasks
+  const autopilotWorker = new AutopilotWorker({
+    db, schema, io, agentManager, autopilotManager, sessionManager,
+  });
+  await autopilotWorker.sweepOnStartup();
+  autopilotWorker.start();
 
   // Disconnect cleanup timers - keyed by attemptId
   const disconnectTimers = new Map<string, NodeJS.Timeout>();
@@ -814,34 +826,6 @@ app.prepare().then(async () => {
       if (ack) ack({ alive });
     });
 
-    // Autopilot handlers
-    socket.on('autopilot:enable', async (data: { projectId: string }) => {
-      const { projectId } = data;
-      log.info({ projectId }, '[Autopilot] Enabling autopilot');
-      await autopilotManager.enable(projectId, db, schema);
-      await autopilotManager.planAndReorder(projectId, {
-        db, io, schema, agentManager, sessionManager,
-      });
-    });
-
-    socket.on('autopilot:disable', async (data: { projectId: string }) => {
-      const { projectId } = data;
-      log.info({ projectId }, '[Autopilot] Disabling autopilot');
-      await autopilotManager.disable(projectId, db, schema);
-      io.emit('autopilot:status', {
-        projectId,
-        ...autopilotManager.getStatus(projectId),
-      });
-    });
-
-    socket.on('autopilot:status-request', (data: { projectId: string }) => {
-      const { projectId } = data;
-      socket.emit('autopilot:status', {
-        projectId,
-        ...autopilotManager.getStatus(projectId),
-      });
-    });
-
     socket.on('disconnect', () => {
       log.info(`Client disconnected: ${socket.id}`);
 
@@ -1456,11 +1440,45 @@ app.prepare().then(async () => {
       io.emit('task:finished', { taskId: attempt.taskId, status });
     }
 
-    // Autopilot: handle task completion for auto-processing
+    // Update task status in DB when agent finishes
     if (attempt?.taskId && status !== 'cancelled') {
-      await autopilotManager.onTaskFinished(attempt.taskId, status, {
-        db, io, schema, agentManager, sessionManager,
-      });
+      if (autopilotManager.isEnabled()) {
+        // Autopilot: handle task completion with retry/pick-next logic
+        await autopilotManager.onTaskFinished(attempt.taskId, status, {
+          db, io, schema, agentManager, sessionManager,
+        });
+      } else if (status === 'completed') {
+        // Non-autopilot: validate attempt did real work before moving to in_review
+        const task = await db.query.tasks.findFirst({
+          where: eq(schema.tasks.id, attempt.taskId),
+        });
+        if (task && task.status === 'in_progress') {
+          const validation = await autopilotManager.validateAttemptCompletion(
+            attempt.taskId,
+            { db, io, schema, agentManager, sessionManager },
+          );
+
+          if (validation.valid) {
+            await db
+              .update(schema.tasks)
+              .set({ status: 'in_review', updatedAt: Date.now() })
+              .where(eq(schema.tasks.id, attempt.taskId));
+
+            const updatedTask = await db.query.tasks.findFirst({
+              where: eq(schema.tasks.id, attempt.taskId),
+            });
+            if (updatedTask) {
+              io.emit('task:updated', updatedTask);
+            }
+            log.info(`[Server] Non-autopilot task ${attempt.taskId} -> in_review`);
+          } else {
+            log.info(
+              `[Server] Non-autopilot task ${attempt.taskId} incomplete: ${validation.reason}, keeping in_progress`,
+            );
+          }
+        }
+      }
+      // Non-autopilot failed: keep in_progress for manual retry
     }
 
     // Auto-compact check: if context exceeded threshold and auto-compact is enabled
@@ -1744,6 +1762,10 @@ app.prepare().then(async () => {
   // Graceful shutdown handler
   const shutdown = async (signal: string) => {
     log.info(`\n> ${signal} received, shutting down gracefully...`);
+
+    // Stop autopilot worker
+    autopilotWorker.stop();
+    log.info('> Autopilot worker stopped');
 
     // Stop tunnel
     await tunnelService.stop();

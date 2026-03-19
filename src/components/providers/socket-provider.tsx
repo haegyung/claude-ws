@@ -1,11 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useRunningTasksStore } from '@/stores/running-tasks-store';
-import { useAutopilotStore } from '@/stores/autopilot-store';
 import { useTaskStore } from '@/stores/task-store';
 import type { Task } from '@/types';
+
+const SocketContext = createContext<Socket | null>(null);
+
+/** Access the global Socket.IO instance (null before connection) */
+export function useGlobalSocket(): Socket | null {
+  return useContext(SocketContext);
+}
 
 /**
  * Global socket provider that listens for task status updates
@@ -57,24 +63,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // Autopilot status listeners
-    socketInstance.on('autopilot:status', (data: { projectId: string } & Record<string, any>) => {
-      useAutopilotStore.getState().updateStatus(data.projectId, data);
-    });
-
-    socketInstance.on('autopilot:task-started', (data: { projectId: string; taskId: string } & Record<string, any>) => {
-      useAutopilotStore.getState().updateStatus(data.projectId, data);
-      useRunningTasksStore.getState().addRunningTask(data.taskId);
-    });
-
-    socketInstance.on('autopilot:planned', (data: { projectId: string } & Record<string, any>) => {
-      useAutopilotStore.getState().updateStatus(data.projectId, data);
-    });
-
     return () => {
       socketInstance.disconnect();
     };
   }, []);
 
-  return <>{children}</>;
+  return (
+    <SocketContext.Provider value={socket}>
+      {children}
+    </SocketContext.Provider>
+  );
 }

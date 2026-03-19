@@ -10,7 +10,6 @@ import { useAgentFactoryUIStore } from '@/stores/agent-factory-ui-store';
 import { useSettingsUIStore } from '@/stores/settings-ui-store';
 import { useTunnelStore } from '@/stores/tunnel-store';
 import { useAutopilot } from '@/hooks/use-autopilot';
-import { useProjectStore } from '@/stores/project-store';
 import { usePanelLayoutStore } from '@/stores/panel-layout-store';
 import { KANBAN_COLUMNS } from '@/types';
 import { LanguageSwitcher } from '@/components/ui/language-switcher';
@@ -47,9 +46,7 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
   const { setOpen: setSettingsOpen } = useSettingsUIStore();
   const { setWizardOpen, status } = useTunnelStore();
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const { activeProjectId, selectedProjectIds } = useProjectStore();
-  const autopilotProjectId = activeProjectId || (selectedProjectIds.length === 1 ? selectedProjectIds[0] : null);
-  const { enabled: autopilotEnabled, phase: autopilotPhase, toggle: toggleAutopilot } = useAutopilot(autopilotProjectId);
+  const { enabled: autopilotEnabled, phase: autopilotPhase, toggle: toggleAutopilot } = useAutopilot();
   const { hiddenColumns, toggleColumn } = usePanelLayoutStore();
   const [mounted, setMounted] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -134,40 +131,38 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
           </div>
         </div>
 
-        {/* Autopilot toggle */}
-        {autopilotProjectId && (
-          <div className="relative">
-            <Button
-              variant={autopilotEnabled ? 'default' : 'outline'}
-              onClick={toggleAutopilot}
-              className={cn(
-                'w-full justify-start gap-2 pr-9',
-                autopilotEnabled && 'bg-green-600 hover:bg-green-700 text-white'
-              )}
-            >
-              <Zap className={cn('h-4 w-4', autopilotEnabled && autopilotPhase !== 'idle' && 'animate-pulse')} />
-              {autopilotEnabled ? tKanban('autopilotOn') : tKanban('autopilot')}
-            </Button>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className={cn(
-                      'absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-full cursor-help transition-colors',
-                      autopilotEnabled ? 'text-white/70 hover:text-white' : 'text-muted-foreground hover:text-foreground'
-                    )}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-[220px]">
-                  <p className="text-xs">{tSettings('autopilotDescription')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-        )}
+        {/* Autopilot toggle (workspace-wide) */}
+        <div className="relative">
+          <Button
+            variant={autopilotEnabled ? 'default' : 'outline'}
+            onClick={toggleAutopilot}
+            className={cn(
+              'w-full justify-start gap-2 pr-9',
+              autopilotEnabled && 'bg-green-600 hover:bg-green-700 text-white'
+            )}
+          >
+            <Zap className={cn('h-4 w-4', autopilotEnabled && autopilotPhase !== 'idle' && 'animate-pulse')} />
+            {autopilotEnabled ? tKanban('autopilotOn') : tKanban('autopilot')}
+          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={cn(
+                    'absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-6 w-6 rounded-full cursor-help transition-colors',
+                    autopilotEnabled ? 'text-white/70 hover:text-white' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-[220px]">
+                <p className="text-xs">{tSettings('autopilotDescription')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
 
         <div className="border-t my-1" />
 
