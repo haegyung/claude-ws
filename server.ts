@@ -48,6 +48,7 @@ import { usageTracker } from './src/lib/usage-tracker';
 import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
+import { getMinioPullQueueWorker } from './src/lib/minio-pull-queue';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
@@ -57,6 +58,7 @@ const port = getPort();
 
 const app = next({ dev, hostname, port, turbopack: false });
 const handle = app.getRequestHandler();
+const minioPullQueueWorker = getMinioPullQueueWorker();
 
 app.prepare().then(async () => {
   const httpServer = createServer((req, res) => {
@@ -1661,6 +1663,9 @@ app.prepare().then(async () => {
   httpServer.listen(port, () => {
     log.info(`> Ready on http://${hostname}:${port}`);
 
+    // Start MinIO pull queue worker with server lifecycle
+    minioPullQueueWorker.start();
+
     // Try to auto-reconnect tunnel after server is ready
     tunnelService.tryAutoReconnect().catch((err) => {
       log.error({ err }, '[Server] Failed to auto-reconnect tunnel');
@@ -1679,6 +1684,10 @@ app.prepare().then(async () => {
     // Stop tunnel
     await tunnelService.stop();
     log.info('> Tunnel stopped');
+
+    // Stop MinIO pull queue worker
+    minioPullQueueWorker.stop();
+    log.info('> MinIO pull queue worker stopped');
 
     // Cancel all Claude agents first
     agentManager.cancelAll();
