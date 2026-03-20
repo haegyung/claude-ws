@@ -58,7 +58,7 @@ export function createForceCreateService(db: any) {
           throw new ForceCreateError('projectName must contain at least one alphanumeric character', 400);
         }
 
-        const projectDirName = `${projectId}-${sanitized}`;
+        const projectDirName = projectId;
         const projectPath = projectRootPath
           ? join(projectRootPath, projectDirName)
           : join(defaultBasePath, 'data', 'projects', projectDirName);
