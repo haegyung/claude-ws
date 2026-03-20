@@ -232,7 +232,7 @@ app.prepare().then(async () => {
               const { mkdir } = await import('fs/promises');
               const { join } = await import('path');
 
-              const projectDirName = `${projectId}-${projectName}`;
+              const projectDirName = projectId;
               const projectPath = projectRootPath
                 ? join(projectRootPath, projectDirName)
                 : join(userCwd, 'data', 'projects', projectDirName);
