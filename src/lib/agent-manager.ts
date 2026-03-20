@@ -18,12 +18,29 @@ import type { BackgroundShellInfo } from './sdk-event-adapter';
 import { getSystemPrompt } from './system-prompt';
 import { modelIdToDisplayName } from './models';
 import { createLogger } from './logger';
-import { getActiveProvider, getProvider, type Provider, type ProviderSession } from './providers';
+import { getActiveProvider, type Provider, type ProviderSession } from './providers';
 import { buildOutputFormatPrompt } from './agent-output-handler';
 import { wireProviderEvents, type EventWiringContext } from './agent-event-wiring';
 import { PersistentQuestionStore, type PersistentQuestionData } from './agent-persistent-question-store';
 
 const log = createLogger('AgentManager');
+const FALLBACK_MODEL_ID = 'claude-opus-4-6';
+
+function resolveDefaultModelFromEnv(): string {
+  const envCandidates = [
+    process.env.ANTHROPIC_MODEL,
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+  ];
+
+  for (const candidate of envCandidates) {
+    const value = candidate?.trim();
+    if (value) return value;
+  }
+
+  return FALLBACK_MODEL_ID;
+}
 
 interface AgentInstance {
   attemptId: string;
@@ -50,7 +67,6 @@ export interface AgentStartOptions {
   projectPath: string;
   prompt: string;
   model?: string;
-  provider?: 'claude-cli' | 'claude-sdk';
   sessionOptions?: {
     resume?: string;
     resumeSessionAt?: string;
@@ -96,7 +112,7 @@ class AgentManager extends EventEmitter {
    * Start a new agent query via the active provider
    */
   async start(options: AgentStartOptions): Promise<void> {
-    const { attemptId, projectPath, prompt, sessionOptions, filePaths, outputFormat, outputSchema, maxTurns, model, provider: selectedProvider } = options;
+    const { attemptId, projectPath, prompt, sessionOptions, filePaths, outputFormat, outputSchema, maxTurns, model } = options;
 
     if (this.agents.has(attemptId)) return;
 
@@ -118,15 +134,13 @@ class AgentManager extends EventEmitter {
     }
 
     // Build model identity for system prompt
-    const effectiveModel = model || 'claude-opus-4-6';
+    const effectiveModel = model?.trim() || resolveDefaultModelFromEnv();
     const modelDisplayName = modelIdToDisplayName(effectiveModel);
     const modelIdentity = modelDisplayName !== effectiveModel
       ? `You are powered by the model named ${modelDisplayName}. The exact model ID is ${effectiveModel}.`
       : `You are powered by the model ${effectiveModel}.`;
 
-    const provider = selectedProvider
-      ? getProvider(selectedProvider)
-      : getActiveProvider();
+    const provider = getActiveProvider();
 
     // Wire up provider events for this attempt
     wireProviderEvents(this.buildWiringContext(), provider, attemptId, outputFormat, projectPath);
