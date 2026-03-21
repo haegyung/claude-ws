@@ -14,19 +14,32 @@ import { createLogger } from './logger';
 const log = createLogger('SessionFileOps');
 
 /**
- * Get the file path for a session ID by scanning ~/.claude/projects
- * Returns null if file doesn't exist
+ * Get the file path for a session ID by scanning known session directories.
+ * Searches both ~/.claude/projects (CLI sessions) and the SDK isolated config dir.
+ * Returns null if file doesn't exist.
  */
 export function getSessionFilePath(sessionId: string): string | null {
-  const claudeDir = path.join(os.homedir(), '.claude');
-  const projectsDir = path.join(claudeDir, 'projects');
+  // Directories to scan for session files
+  const searchDirs: string[] = [];
 
-  if (!fs.existsSync(projectsDir)) return null;
+  // CLI sessions: ~/.claude/projects
+  const claudeProjectsDir = path.join(os.homedir(), '.claude', 'projects');
+  if (fs.existsSync(claudeProjectsDir)) searchDirs.push(claudeProjectsDir);
 
-  const projectDirs = fs.readdirSync(projectsDir);
-  for (const projectDir of projectDirs) {
-    const candidatePath = path.join(projectsDir, projectDir, `${sessionId}.jsonl`);
-    if (fs.existsSync(candidatePath)) return candidatePath;
+  // SDK sessions: {DATA_DIR}/claude-sdk-isolated-config/projects
+  const sdkProjectsDir = path.resolve(
+    process.env.DATA_DIR || './data',
+    'claude-sdk-isolated-config',
+    'projects'
+  );
+  if (fs.existsSync(sdkProjectsDir)) searchDirs.push(sdkProjectsDir);
+
+  for (const projectsDir of searchDirs) {
+    const projectDirs = fs.readdirSync(projectsDir);
+    for (const projectDir of projectDirs) {
+      const candidatePath = path.join(projectsDir, projectDir, `${sessionId}.jsonl`);
+      if (fs.existsSync(candidatePath)) return candidatePath;
+    }
   }
   return null;
 }

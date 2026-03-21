@@ -141,36 +141,49 @@ ALL traffic for these routes goes through agentic-sdk:
 
 **Why:** When users install this package via npm, devDependencies are not installed. Any production code importing from devDependencies will fail at runtime.
 
-## Database Schema Changes
+## Data Migrations (CRITICAL)
 
-**CRITICAL: When modifying database schema, update BOTH locations:**
+**ALL data-layer changes MUST go through the incremental migration system.** This includes:
+- **DB schema changes** (new tables, new columns, index changes)
+- **Config folder changes** (symlinks, file moves, config restructuring in `data/`)
+- **Data folder changes** (session file moves, cache restructuring, data format upgrades)
 
-1. **`src/lib/db/schema.ts`** - Drizzle ORM schema (source of truth)
-2. **`src/lib/db/index.ts`** - Runtime `initDb()` function
+Migrations run automatically on every server startup via `runMigrations()` in `server.ts`. Version tracked in `app_settings` table (`migration_version` key).
 
-### Why Both?
+### How to Add a Migration
 
-- `initDb()` runs at app startup and creates/migrates tables for existing users
-- Drizzle schema is used for type safety and generating migrations
-- If you only update schema.ts without initDb(), existing databases will fail with "no such column" errors
+1. Create `src/lib/migrations/NNN-descriptive-name.ts` (increment NNN from last migration)
+2. Export a `Migration` object: `{ version: N, name: string, run: () => void }`
+3. Import and append to `migrations` array in `src/lib/migrations/migration-runner.ts`
+4. For DB schema changes, also update `src/lib/db/schema.ts` (Drizzle types) and `src/lib/db/index.ts` (`initDb()` for fresh installs)
+5. Run `pnpm db:generate` if DB schema changed
 
-### Steps for Schema Changes
-
-1. Update `src/lib/db/schema.ts` with new columns/tables
-2. Add corresponding `ALTER TABLE` or `CREATE TABLE IF NOT EXISTS` in `initDb()` (with try-catch for existing columns)
-3. Run `pnpm db:generate` to generate drizzle migration files
-4. Test with both fresh and existing databases
-
-### Example: Adding a new column
+### Migration File Template
 
 ```typescript
-// 1. In schema.ts
-myNewColumn: integer('my_new_column').notNull().default(0),
+// src/lib/migrations/NNN-descriptive-name.ts
+import type { Migration } from './migration-runner';
 
-// 2. In index.ts initDb()
-try {
-  sqlite.exec(`ALTER TABLE my_table ADD COLUMN my_new_column INTEGER NOT NULL DEFAULT 0`);
-} catch {
-  // Column already exists
-}
+export const migration: Migration = {
+  version: NNN,
+  name: 'descriptive-name',
+  run: () => {
+    // Migration logic here — must be idempotent as safety net
+  },
+};
 ```
+
+### Rules
+
+- Migrations run in order, exactly once per version number
+- Each migration must be **idempotent** (safe if re-run)
+- On failure: migration halts, server logs error — fix and restart
+- **NEVER** modify an already-released migration — create a new one
+- Keep migration logic self-contained (don't import app services that may change)
+- For DB schema: still update `schema.ts` + `initDb()` for fresh installs (migrations handle upgrades)
+
+### Current Migrations
+
+| # | Name | Description |
+|---|------|-------------|
+| 001 | shared-session-directory-symlink | Symlinks SDK projects/ → ~/.claude/projects/ for cross-provider session resume |

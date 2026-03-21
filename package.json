@@ -84,11 +84,12 @@
     "build": "cross-env NODE_ENV=production next build",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "db:generate": "drizzle-kit generate",
-    "db:fix": "tsx scripts/db-fix-columns.ts"
+    "db:fix": "tsx scripts/db-fix-columns.ts",
+    "migrate:sessions": "tsx scripts/migrate-sdk-sessions.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.42",
-    "@anthropic-ai/sdk": "^0.71.2",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
+    "@anthropic-ai/sdk": "^0.80.0",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",

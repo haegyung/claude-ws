@@ -24,6 +24,10 @@ process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = '1';
 // claude-ws spawns Claude CLI from a server process that may itself run inside Claude Code
 delete process.env.CLAUDECODE;
 
+// Run incremental data migrations (DB schema, config/data folder changes)
+import { runMigrations } from './src/lib/migrations/migration-runner';
+runMigrations();
+
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';

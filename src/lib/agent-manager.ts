@@ -18,7 +18,7 @@ import type { BackgroundShellInfo } from './sdk-event-adapter';
 import { getSystemPrompt } from './system-prompt';
 import { modelIdToDisplayName } from './models';
 import { createLogger } from './logger';
-import { getActiveProvider, type Provider, type ProviderSession } from './providers';
+import { getActiveProvider, getProvider, type Provider, type ProviderSession } from './providers';
 import { buildOutputFormatPrompt } from './agent-output-handler';
 import { wireProviderEvents, type EventWiringContext } from './agent-event-wiring';
 import { PersistentQuestionStore, type PersistentQuestionData } from './agent-persistent-question-store';
@@ -67,6 +67,7 @@ export interface AgentStartOptions {
   projectPath: string;
   prompt: string;
   model?: string;
+  provider?: 'claude-cli' | 'claude-sdk';
   sessionOptions?: {
     resume?: string;
     resumeSessionAt?: string;
@@ -112,7 +113,7 @@ class AgentManager extends EventEmitter {
    * Start a new agent query via the active provider
    */
   async start(options: AgentStartOptions): Promise<void> {
-    const { attemptId, projectPath, prompt, sessionOptions, filePaths, outputFormat, outputSchema, maxTurns, model } = options;
+    const { attemptId, projectPath, prompt, sessionOptions, filePaths, outputFormat, outputSchema, maxTurns, model, provider: requestedProvider } = options;
 
     if (this.agents.has(attemptId)) return;
 
@@ -133,14 +134,16 @@ class AgentManager extends EventEmitter {
       fullPrompt += buildOutputFormatPrompt(outputFormat, outputSchema, attemptId);
     }
 
-    // Build model identity for system prompt
+    // Build model identity and project context for system prompt
     const effectiveModel = model?.trim() || resolveDefaultModelFromEnv();
     const modelDisplayName = modelIdToDisplayName(effectiveModel);
     const modelIdentity = modelDisplayName !== effectiveModel
       ? `You are powered by the model named ${modelDisplayName}. The exact model ID is ${effectiveModel}.`
       : `You are powered by the model ${effectiveModel}.`;
+    const projectContext = `Your current working directory is ${projectPath}. All file operations should use paths relative to or within this directory.`;
 
-    const provider = getActiveProvider();
+    // Use per-request provider if specified, otherwise fall back to env-based default
+    const provider = requestedProvider ? getProvider(requestedProvider) : getActiveProvider();
 
     // Wire up provider events for this attempt
     wireProviderEvents(this.buildWiringContext(), provider, attemptId, outputFormat, projectPath);
@@ -153,7 +156,7 @@ class AgentManager extends EventEmitter {
         model: effectiveModel,
         sessionOptions,
         maxTurns,
-        systemPromptAppend: modelIdentity,
+        systemPromptAppend: `${modelIdentity}\n${projectContext}`,
         outputFormat,
         outputSchema,
       });

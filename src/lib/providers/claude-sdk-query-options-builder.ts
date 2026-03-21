@@ -12,7 +12,7 @@
  */
 
 import { existsSync, mkdirSync } from 'fs';
-import { join, normalize } from 'path';
+import { join, normalize, resolve } from 'path';
 import { checkpointManager } from '../checkpoint-manager';
 import { createLogger } from '../logger';
 import { isServerCommand } from './claude-sdk-model-alias-and-server-command-utils';
@@ -181,7 +181,8 @@ function buildIsolatedSubprocessEnv(model: string): Record<string, string | unde
 
   // Point CLI config to an isolated dir so it has no auth tokens
   // and cannot fetch remote MCP servers from claude.ai
-  const isolatedConfigDir = join(
+  // Must be absolute so SDK subprocess (cwd=projectPath) resolves the same location
+  const isolatedConfigDir = resolve(
     process.env.DATA_DIR || './data',
     'claude-sdk-isolated-config'
   );
