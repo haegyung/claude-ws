@@ -52,7 +52,8 @@ import { usageTracker } from './src/lib/usage-tracker';
 import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
-import { createAutopilotManager } from './src/lib/autopilot';
+import { createAutopilotManager, appendQuestionAnswer, appendSubagentEnded, appendTrackedTaskUpdate } from './src/lib/autopilot';
+import type { AutopilotMode } from './src/lib/autopilot';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
@@ -111,7 +112,6 @@ app.prepare().then(async () => {
 
   // Initialize Autopilot Manager
   const autopilotManager = createAutopilotManager();
-  await autopilotManager.restoreFromSettings(db, schema);
   autopilotManager.registerQuestionListener(agentManager);
 
   // Initialize Socket.io
@@ -125,6 +125,9 @@ app.prepare().then(async () => {
     pingInterval: 10000,
     pingTimeout: 10000,
   });
+
+  // Restore autopilot state from DB (needs io for worker callbacks)
+  await autopilotManager.restoreFromDb({ db, io, schema, agentManager, sessionManager });
 
   // Disconnect cleanup timers - keyed by attemptId
   const disconnectTimers = new Map<string, NodeJS.Timeout>();
@@ -501,12 +504,26 @@ app.prepare().then(async () => {
         log.info({ attemptId, answers }, '[Server] Received answer');
 
         // Clear persistent question for this task (user has answered)
+        // Also write Q&A to autopilot context file for task resume context
         try {
           const attempt = await db.query.attempts.findFirst({
             where: eq(schema.attempts.id, attemptId),
           });
           if (attempt) {
             agentManager.clearPersistentQuestion(attempt.taskId);
+
+            // Append Q&A to autopilot context file (only for autopilot-managed tasks)
+            const task = await db.query.tasks.findFirst({
+              where: eq(schema.tasks.id, attempt.taskId),
+            });
+            if (task && autopilotManager.isEnabled(task.projectId)) {
+              const project = await db.query.projects.findFirst({
+                where: eq(schema.projects.id, task.projectId),
+              });
+              if (project?.path) {
+                appendQuestionAnswer(project.path, attempt.taskId, questions as any[], answers);
+              }
+            }
           }
         } catch { /* non-critical */ }
 
@@ -834,23 +851,29 @@ app.prepare().then(async () => {
       if (ack) ack({ alive });
     });
 
-    // Autopilot handlers
-    socket.on('autopilot:enable', async (data: { projectId: string }) => {
-      const { projectId } = data;
-      log.info({ projectId }, '[Autopilot] Enabling autopilot');
-      await autopilotManager.enable(projectId, db, schema);
-      await autopilotManager.planAndReorder(projectId, {
+    // Autopilot handlers — primary: set-mode, with backward-compat aliases
+    socket.on('autopilot:set-mode', async (data: { projectId: string; mode: string }) => {
+      const { projectId, mode } = data;
+      if (!['off', 'autonomous', 'ask'].includes(mode)) return;
+      log.info({ projectId, mode }, '[Autopilot] Setting mode');
+      await autopilotManager.setMode(projectId, mode as AutopilotMode, {
         db, io, schema, agentManager, sessionManager,
       });
     });
 
+    // Backward compat: old enable = autonomous
+    socket.on('autopilot:enable', async (data: { projectId: string }) => {
+      log.info({ projectId: data.projectId }, '[Autopilot] Enable (compat → autonomous)');
+      await autopilotManager.setMode(data.projectId, 'autonomous', {
+        db, io, schema, agentManager, sessionManager,
+      });
+    });
+
+    // Backward compat: old disable = off
     socket.on('autopilot:disable', async (data: { projectId: string }) => {
-      const { projectId } = data;
-      log.info({ projectId }, '[Autopilot] Disabling autopilot');
-      await autopilotManager.disable(projectId, db, schema);
-      io.emit('autopilot:status', {
-        projectId,
-        ...autopilotManager.getStatus(projectId),
+      log.info({ projectId: data.projectId }, '[Autopilot] Disable (compat → off)');
+      await autopilotManager.setMode(data.projectId, 'off', {
+        db, io, schema, agentManager, sessionManager,
       });
     });
 
@@ -1471,58 +1494,77 @@ app.prepare().then(async () => {
       });
     }
 
-    // Global event for all clients to track completed tasks
-    if (attempt?.taskId) {
-      io.emit('task:finished', { taskId: attempt.taskId, status });
-    }
+    // Skip autopilot/task:finished processing for internal compact attempts
+    if (autopilotManager.isInternalCompact(attemptId)) {
+      log.info({ attemptId }, '[Server] Internal compact attempt finished, skipping autopilot processing');
+    } else {
+      // Global event for all clients to track completed tasks
+      if (attempt?.taskId) {
+        io.emit('task:finished', { taskId: attempt.taskId, status });
+      }
 
-    // Autopilot: handle task completion for auto-processing
-    if (attempt?.taskId && status !== 'cancelled') {
-      await autopilotManager.onTaskFinished(attempt.taskId, status, {
-        db, io, schema, agentManager, sessionManager,
-      });
-    }
+      const shouldCompact = !!(status === 'completed' && usageStats?.contextHealth?.shouldCompact);
 
-    // Auto-compact check: if context exceeded threshold and auto-compact is enabled
-    if (status === 'completed' && usageStats?.contextHealth?.shouldCompact && attempt?.taskId) {
-      try {
-        const autoCompactSetting = await db
-          .select()
-          .from(schema.appSettings)
-          .where(eq(schema.appSettings.key, 'auto_compact_enabled'))
-          .limit(1);
+      // Autopilot: handle task completion for auto-processing
+      // Pass shouldCompact so autopilot can compact before moving to in_review
+      if (attempt?.taskId && status !== 'cancelled') {
+        const autopilotHandled = autopilotManager.isEnabled(
+          (await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) }))?.projectId || ''
+        );
 
-        const autoCompactEnabled = autoCompactSetting.length > 0 && autoCompactSetting[0].value === 'true';
+        await autopilotManager.onTaskFinished(attempt.taskId, status, {
+          db, io, schema, agentManager, sessionManager,
+        }, attempt.id, shouldCompact);
 
-        if (autoCompactEnabled) {
-          const project = await db.query.projects.findFirst({
-            where: eq(schema.projects.id, (await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) }))!.projectId),
-          });
+        // If autopilot is active, it handles compact internally (before in_review).
+        // Only run standalone auto-compact for non-autopilot tasks.
+        if (!autopilotHandled && shouldCompact && attempt?.taskId) {
+          try {
+            const autoCompactSetting = await db
+              .select()
+              .from(schema.appSettings)
+              .where(eq(schema.appSettings.key, 'auto_compact_enabled'))
+              .limit(1);
 
-          if (project) {
-            const conversationSummary = await sessionManager.getConversationSummary(attempt.taskId);
+            const autoCompactEnabled = autoCompactSetting.length > 0 && autoCompactSetting[0].value === 'true';
 
-            const compactAttemptId = nanoid();
-            await db.insert(schema.attempts).values({
-              id: compactAttemptId,
-              taskId: attempt.taskId,
-              prompt: 'Auto-compact: summarize conversation context',
-              displayPrompt: 'Auto-compacting conversation...',
-              status: 'running',
-            });
+            if (autoCompactEnabled) {
+              const compactTask = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) });
+              const project = compactTask ? await db.query.projects.findFirst({
+                where: eq(schema.projects.id, compactTask.projectId),
+              }) : null;
 
-            log.info({ attemptId: compactAttemptId, taskId: attempt.taskId }, '[Server] Auto-compacting conversation');
-            io.to(`attempt:${attemptId}`).emit('context:compacting', { attemptId: compactAttemptId, taskId: attempt.taskId });
+              if (project && compactTask) {
+                const conversationSummary = await sessionManager.getConversationSummary(attempt.taskId);
+                const taskModel = compactTask.lastModel || process.env.ANTHROPIC_MODEL || undefined;
+                const taskProvider = compactTask.lastProvider
+                  || (taskModel && !/^claude/i.test(taskModel) && !/^(opus|sonnet|haiku)$/i.test(taskModel) ? 'claude-sdk' : undefined);
 
-            agentManager.compact({
-              attemptId: compactAttemptId,
-              projectPath: project.path,
-              conversationSummary,
-            });
+                const compactAttemptId = nanoid();
+                await db.insert(schema.attempts).values({
+                  id: compactAttemptId,
+                  taskId: attempt.taskId,
+                  prompt: 'Auto-compact: summarize conversation context',
+                  displayPrompt: 'Auto-compacting conversation...',
+                  status: 'running',
+                });
+
+                log.info({ attemptId: compactAttemptId, taskId: attempt.taskId, model: taskModel, provider: taskProvider }, '[Server] Auto-compacting conversation');
+                io.to(`attempt:${attemptId}`).emit('context:compacting', { attemptId: compactAttemptId, taskId: attempt.taskId });
+
+                agentManager.compact({
+                  attemptId: compactAttemptId,
+                  projectPath: project.path,
+                  conversationSummary,
+                  model: taskModel,
+                  provider: taskProvider as 'claude-cli' | 'claude-sdk' | undefined,
+                });
+              }
+            }
+          } catch (compactError) {
+            log.error({ compactError }, '[Server] Auto-compact failed');
           }
         }
-      } catch (compactError) {
-        log.error({ compactError }, '[Server] Auto-compact failed');
       }
     }
 
@@ -1700,6 +1742,42 @@ app.prepare().then(async () => {
   // Clean up per-attempt dedup sets when workflow is cleared
   workflowTracker.on('workflow-cleared', ({ attemptId }: { attemptId: string }) => {
     persistedMessageKeys.delete(attemptId);
+  });
+
+  // --- Autopilot context file: record sub-agent & sub-task journey ---
+  // Helper to resolve projectPath for an autopilot-managed attempt
+  async function resolveAutopilotContext(attemptId: string): Promise<{ taskId: string; projectPath: string } | null> {
+    const taskId = autopilotManager.getTaskIdForAttempt(attemptId);
+    if (!taskId) return null;
+    const attempt = await db.query.attempts.findFirst({ where: eq(schema.attempts.id, attemptId) });
+    if (!attempt) return null;
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) });
+    if (!task) return null;
+    const project = await db.query.projects.findFirst({ where: eq(schema.projects.id, task.projectId) });
+    if (!project?.path) return null;
+    return { taskId: attempt.taskId, projectPath: project.path };
+  }
+
+  workflowTracker.on('subagent-end', async ({ attemptId, node }) => {
+    const ctx = await resolveAutopilotContext(attemptId);
+    if (ctx) appendSubagentEnded(ctx.projectPath, ctx.taskId, node.name || null, node.status);
+  });
+
+  // Deduplicate tracked task writes per attempt to avoid spamming context file
+  const lastTrackedTaskSnapshot = new Map<string, string>();
+  workflowTracker.on('workflow-update', async ({ attemptId, workflow }) => {
+    if (!workflow?.tasks?.length) return;
+    const ctx = await resolveAutopilotContext(attemptId);
+    if (!ctx) return;
+    // Only write when task statuses actually change
+    const snapshot = workflow.tasks.map((t: any) => `${t.subject}:${t.status}`).join('|');
+    if (lastTrackedTaskSnapshot.get(attemptId) === snapshot) return;
+    lastTrackedTaskSnapshot.set(attemptId, snapshot);
+    appendTrackedTaskUpdate(ctx.projectPath, ctx.taskId, workflow.tasks);
+  });
+
+  workflowTracker.on('workflow-cleared', ({ attemptId }: { attemptId: string }) => {
+    lastTrackedTaskSnapshot.delete(attemptId);
   });
 
   // Extract summary from last assistant message

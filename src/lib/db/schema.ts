@@ -10,6 +10,9 @@ export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   path: text('path').notNull().unique(),
+  autopilotMode: text('autopilot_mode', {
+    enum: ['off', 'autonomous', 'ask'],
+  }).notNull().default('off'),
   createdAt: integer('created_at', { mode: 'number' })
     .notNull()
     .$defaultFn(() => Date.now()),

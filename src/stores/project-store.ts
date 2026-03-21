@@ -30,7 +30,7 @@ interface ProjectActions {
   getSelectedProjects: () => Project[];
   fetchProjects: () => Promise<void>;
   createProject: (data: { name: string; path: string }) => Promise<Project>;
-  updateProject: (id: string, data: Partial<Pick<Project, 'name' | 'path'>>) => Promise<void>;
+  updateProject: (id: string, data: Partial<Pick<Project, 'name' | 'path' | 'autopilotMode'>>) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   /** @deprecated Use getActiveProject() instead */
   currentProject: Project | null;

@@ -100,6 +100,22 @@ export function ConversationView({
     if (currentAttemptId && prevId && currentAttemptId !== prevId) loadHistory(true);
   }, [currentAttemptId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Refresh history when the tab/window regains visibility or focus
+  // This catches missed socket events from tab switches, network blips, etc.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadHistory(true);
+    };
+    const handleFocus = () => loadHistory(true);
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [taskId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (isLoading) {
     return (
       <div className={cn('flex items-center justify-center h-full', className)}>

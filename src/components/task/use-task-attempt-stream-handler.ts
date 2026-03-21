@@ -42,6 +42,7 @@ export function useTaskAttemptStreamHandler(
 ) {
   const t = useTranslations('chat');
   const { updateTaskStatus, setTaskChatInit, moveTaskToInProgress, setPendingAutoStartTask } = useTaskStore();
+  const { projects, activeProjectId, selectedProjectIds } = useProjectStore();
   const { getPendingFiles, clearFiles } = useAttachmentStore();
   const { getTaskModel, getTaskProvider } = useModelStore();
 
@@ -49,16 +50,47 @@ export function useTaskAttemptStreamHandler(
   const [currentAttemptFiles, setCurrentAttemptFiles] = useState<PendingFile[]>([]);
   const lastCompletedTaskRef = useRef<string | null>(null);
   const hasAutoStartedRef = useRef(false);
+  // Defer "In Review" move until isRunning is actually false (the source of truth)
+  const pendingReviewTaskRef = useRef<string | null>(null);
+  const isRunningRef = useRef(false);
 
-  const handleTaskComplete = useCallback(async (completedTaskId: string) => {
+  // Check if autopilot is active — if so, autopilot owns the "in_review" transition
+  const currentProjectId = activeProjectId || selectedProjectIds[0];
+  const isAutopilotActive = currentProjectId
+    ? projects.some(p => p.id === currentProjectId && p.autopilotMode && p.autopilotMode !== 'off')
+    : false;
+
+  const handleTaskComplete = useCallback((completedTaskId: string) => {
     if (lastCompletedTaskRef.current === completedTaskId) return;
     lastCompletedTaskRef.current = completedTaskId;
-    await updateTaskStatus(completedTaskId, 'in_review');
+    // When autopilot is active, it manages the in_review transition
+    // (including validation). Frontend must not race with it.
+    if (isAutopilotActive) return;
+    // Only move to review if client confirms the agent stopped running.
+    // If still running, defer — the useEffect below will pick it up.
+    if (isRunningRef.current) {
+      pendingReviewTaskRef.current = completedTaskId;
+      return;
+    }
+    updateTaskStatus(completedTaskId, 'in_review');
     toast.success(t('taskCompleted'), { description: t('movedToReview') });
-  }, [updateTaskStatus, t]);
+  }, [updateTaskStatus, t, isAutopilotActive]);
 
   const stream = useAttemptStream({ taskId, onComplete: handleTaskComplete });
   const { startAttempt, interruptAndSend, isRunning, isConnected } = stream;
+
+  // Keep isRunningRef in sync so the callback always reads the latest value
+  isRunningRef.current = isRunning;
+
+  // When isRunning transitions to false, flush any deferred "In Review" move
+  useEffect(() => {
+    if (!isRunning && pendingReviewTaskRef.current && !isAutopilotActive) {
+      const taskToReview = pendingReviewTaskRef.current;
+      pendingReviewTaskRef.current = null;
+      updateTaskStatus(taskToReview, 'in_review');
+      toast.success(t('taskCompleted'), { description: t('movedToReview') });
+    }
+  }, [isRunning, updateTaskStatus, t, isAutopilotActive]);
 
   // Auto-start when pendingAutoStartTask matches this task
   useEffect(() => {
@@ -115,6 +147,7 @@ export function useTaskAttemptStreamHandler(
     setCurrentAttemptFiles([]);
     lastCompletedTaskRef.current = null;
     hasAutoStartedRef.current = false;
+    pendingReviewTaskRef.current = null;
   };
 
   return {

@@ -29,6 +29,13 @@
       "when": 1773757515107,
       "tag": "0003_cultured_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1774096900516,
+      "tag": "0004_hard_magdalene",
+      "breakpoints": true
     }
   ]
 }

@@ -117,14 +117,20 @@
     "delete": "Delete",
     "autopilot": "Autopilot",
     "autopilotOn": "Autopilot enabled",
-    "autopilotOff": "Autopilot disabled",
+    "autopilotOff": "OFF",
+    "autopilotAutonomous": "Autonomous",
+    "autopilotAsk": "Ask",
     "autopilotPlanning": "Analyzing task dependencies...",
     "autopilotProcessing": "Processing: {title}",
     "autopilotQueue": "{count} tasks in queue",
     "autopilotRetrying": "Retrying ({count}/{max})",
     "autopilotSkipped": "Skipped (failed {max}x): {title}",
     "autopilotIdle": "All tasks processed",
-    "autopilotProgress": "{processed}/{total} tasks done"
+    "autopilotProgress": "{processed}/{total} tasks done",
+    "autopilotInfoTitle": "Autopilot Modes",
+    "autopilotInfoOff": "No autopilot. Tasks work normally.",
+    "autopilotInfoAutonomous": "Agent gathers requirements, then works fully autonomously. No questions during execution.",
+    "autopilotInfoAsk": "Agent can ask questions during execution. Worker waits for answers before resuming."
   },
   "task": {
     "title": "Title",

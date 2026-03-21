@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 interface AutopilotState {
+  mode: 'off' | 'autonomous' | 'ask';
   enabled: boolean;
   phase: 'idle' | 'planning' | 'processing';
   currentTaskId: string | null;
@@ -18,6 +19,7 @@ interface AutopilotStore {
 }
 
 const defaultState: AutopilotState = {
+  mode: 'off',
   enabled: false,
   phase: 'idle',
   currentTaskId: null,
@@ -34,8 +36,11 @@ export const useAutopilotStore = create<AutopilotStore>((set, get) => ({
     set((prev) => {
       const newMap = new Map(prev.projects);
       const current = newMap.get(projectId) || { ...defaultState };
-      // Pick only known AutopilotState fields from the data
       const update: Partial<AutopilotState> = {};
+      if ('mode' in data) {
+        update.mode = data.mode;
+        update.enabled = data.mode !== 'off';
+      }
       if ('enabled' in data) update.enabled = data.enabled;
       if ('phase' in data) update.phase = data.phase;
       if ('currentTaskId' in data) update.currentTaskId = data.currentTaskId;

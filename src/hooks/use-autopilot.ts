@@ -9,6 +9,7 @@ export function useAutopilot(projectId: string | null) {
   const { getProjectState, updateStatus } = useAutopilotStore();
 
   const state = projectId ? getProjectState(projectId) : {
+    mode: 'off' as const,
     enabled: false,
     phase: 'idle' as const,
     currentTaskId: null,
@@ -29,7 +30,6 @@ export function useAutopilot(projectId: string | null) {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      // Request current status on connect
       socket.emit('autopilot:status-request', { projectId });
     });
 
@@ -57,17 +57,13 @@ export function useAutopilot(projectId: string | null) {
     };
   }, [projectId, updateStatus]);
 
-  const toggle = useCallback(() => {
+  const setMode = useCallback((mode: 'off' | 'autonomous' | 'ask') => {
     if (!projectId || !socketRef.current) return;
-
-    if (state.enabled) {
-      socketRef.current.emit('autopilot:disable', { projectId });
-    } else {
-      socketRef.current.emit('autopilot:enable', { projectId });
-    }
-  }, [projectId, state.enabled]);
+    socketRef.current.emit('autopilot:set-mode', { projectId, mode });
+  }, [projectId]);
 
   return {
+    mode: state.mode,
     enabled: state.enabled,
     phase: state.phase,
     currentTaskId: state.currentTaskId,
@@ -75,6 +71,6 @@ export function useAutopilot(projectId: string | null) {
     processedCount: state.processedCount,
     retryCount: state.retryCount,
     skippedTaskIds: state.skippedTaskIds,
-    toggle,
+    setMode,
   };
 }

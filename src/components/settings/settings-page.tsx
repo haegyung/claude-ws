@@ -31,9 +31,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!currentProject) return;
-    fetch(`/api/settings?keys=autopilot_enabled_${currentProject.id}`)
-      .then((res) => res.json())
-      .then((data) => { if (data[`autopilot_enabled_${currentProject.id}`] === 'true') setAutopilotEnabled(true); });
+    setAutopilotEnabled(currentProject.autopilotMode !== 'off' && !!currentProject.autopilotMode);
   }, [currentProject]);
 
   useEffect(() => {
@@ -68,10 +66,9 @@ export function SettingsPage() {
   const handleAutopilotToggle = async (checked: boolean) => {
     if (!currentProject) return;
     setAutopilotEnabled(checked);
-    await fetch('/api/settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: `autopilot_enabled_${currentProject.id}`, value: String(checked) }),
-    });
+    // Mode toggled via socket event — settings page just toggles between off/autonomous
+    const mode = checked ? 'autonomous' : 'off';
+    await updateProject(currentProject.id, { autopilotMode: mode });
   };
 
   const handleSaveName = async () => {

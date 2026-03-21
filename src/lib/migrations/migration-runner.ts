@@ -17,6 +17,7 @@ import { db, schema } from '../db';
 import { eq } from 'drizzle-orm';
 import { createLogger } from '../logger';
 import { migration as m001 } from './001-shared-session-directory-symlink';
+import { migration as m002 } from './002-autopilot-mode-column';
 
 const log = createLogger('MigrationRunner');
 
@@ -33,6 +34,7 @@ export interface Migration {
  */
 const migrations: Migration[] = [
   m001,
+  m002,
 ];
 
 const MIGRATION_VERSION_KEY = 'migration_version';

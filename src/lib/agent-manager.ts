@@ -232,13 +232,13 @@ class AgentManager extends EventEmitter {
     return false;
   }
 
-  async compact(options: { attemptId: string; projectPath: string; conversationSummary?: string }): Promise<void> {
-    const { attemptId, projectPath, conversationSummary } = options;
+  async compact(options: { attemptId: string; projectPath: string; conversationSummary?: string; model?: string; provider?: AgentStartOptions['provider'] }): Promise<void> {
+    const { attemptId, projectPath, conversationSummary, model, provider } = options;
     const compactPrompt = conversationSummary
       ? `You are continuing a previous conversation that reached the context limit. Here is a summary of the previous context:\n\n${conversationSummary}\n\nPlease acknowledge this context briefly and let the user know you're ready to continue.`
       : 'A previous conversation reached the context limit. Please let the user know you are ready to continue with a fresh context.';
 
-    await this.start({ attemptId, projectPath, prompt: compactPrompt, maxTurns: 1 });
+    await this.start({ attemptId, projectPath, prompt: compactPrompt, maxTurns: 1, model, provider });
   }
 
   cancel(attemptId: string): boolean {

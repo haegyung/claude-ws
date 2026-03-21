@@ -50,6 +50,7 @@ export function initDb() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       path TEXT NOT NULL UNIQUE,
+      autopilot_mode TEXT NOT NULL DEFAULT 'off',
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );
 

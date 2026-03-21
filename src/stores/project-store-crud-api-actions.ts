@@ -86,7 +86,7 @@ export async function createProjectAction(
 
 export async function updateProjectAction(
   id: string,
-  data: Partial<Pick<Project, 'name' | 'path'>>,
+  data: Partial<Pick<Project, 'name' | 'path' | 'autopilotMode'>>,
   set: SetFn
 ): Promise<void> {
   set({ loading: true, error: null });

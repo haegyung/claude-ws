@@ -117,14 +117,20 @@
     "delete": "Xóa",
     "autopilot": "Tự động",
     "autopilotOn": "Tự động đã bật",
-    "autopilotOff": "Tự động đã tắt",
+    "autopilotOff": "TẮT",
+    "autopilotAutonomous": "Tự chủ",
+    "autopilotAsk": "Hỏi",
     "autopilotPlanning": "Đang phân tích phụ thuộc...",
     "autopilotProcessing": "Đang xử lý: {title}",
     "autopilotQueue": "{count} nhiệm vụ trong hàng đợi",
     "autopilotRetrying": "Thử lại ({count}/{max})",
     "autopilotSkipped": "Bỏ qua (lỗi {max} lần): {title}",
     "autopilotIdle": "Đã xử lý xong tất cả",
-    "autopilotProgress": "{processed}/{total} nhiệm vụ xong"
+    "autopilotProgress": "{processed}/{total} nhiệm vụ xong",
+    "autopilotInfoTitle": "Chế độ tự động",
+    "autopilotInfoOff": "Không có tự động. Nhiệm vụ hoạt động bình thường.",
+    "autopilotInfoAutonomous": "Agent thu thập yêu cầu, sau đó làm việc hoàn toàn tự chủ. Không hỏi trong quá trình thực thi.",
+    "autopilotInfoAsk": "Agent có thể đặt câu hỏi trong quá trình thực thi. Worker chờ câu trả lời trước khi tiếp tục."
   },
   "task": {
     "title": "Tiêu đề",
