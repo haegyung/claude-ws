@@ -56,6 +56,7 @@ class WorkflowTracker extends EventEmitter {
         messages: [],
         teams: [],
         tasks: [],
+        taskIdMap: new Map(),
         mode: 'subagent',
       };
       this.workflows.set(attemptId, workflow);
@@ -187,6 +188,25 @@ class WorkflowTracker extends EventEmitter {
   }
 
   /**
+   * Register mapping from TaskCreate result: actual taskId → toolUseId
+   * Called when we see the tool_result for a TaskCreate call.
+   */
+  registerTaskId(attemptId: string, toolUseId: string, actualTaskId: string): void {
+    const workflow = this.workflows.get(attemptId);
+    if (!workflow) return;
+
+    workflow.taskIdMap.set(actualTaskId, toolUseId);
+
+    // Set the taskId field on the tracked task (keep id as toolUseId for DB consistency)
+    const task = workflow.tasks.find((t) => t.id === toolUseId);
+    if (task) {
+      task.taskId = actualTaskId;
+    }
+
+    this.emit('workflow-update', { attemptId, workflow });
+  }
+
+  /**
    * Track a TaskUpdate tool use
    */
   trackTaskUpdate(
@@ -196,7 +216,8 @@ class WorkflowTracker extends EventEmitter {
     const workflow = this.workflows.get(attemptId);
     if (!workflow || !input.taskId) return;
 
-    const task = workflow.tasks.find((t) => t.id === input.taskId);
+    // Look up by actual taskId (registered via registerTaskId), then fall back to id (toolUseId)
+    const task = workflow.tasks.find((t) => t.taskId === input.taskId || t.id === input.taskId);
     if (task) {
       if (input.status) task.status = input.status as TrackedTask['status'];
       if (input.owner) task.owner = input.owner;

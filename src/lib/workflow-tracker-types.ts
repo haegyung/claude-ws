@@ -40,6 +40,8 @@ export interface AgentMessage {
 /** Tracked task from TaskCreate/TaskUpdate tool calls */
 export interface TrackedTask {
   id: string;
+  /** Actual numeric taskId from TaskCreate result (used by TaskUpdate for lookups) */
+  taskId?: string;
   subject: string;
   description?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'deleted';
@@ -59,6 +61,8 @@ export interface WorkflowState {
   messages: AgentMessage[];
   teams: string[];
   tasks: TrackedTask[];
+  /** Maps toolUseId → actual taskId (from TaskCreate result) for TaskUpdate lookups */
+  taskIdMap: Map<string, string>;
   mode: 'subagent' | 'agent-team';
 }
 
