@@ -86,6 +86,8 @@ export const attempts = sqliteTable(
     completedAt: integer('completed_at', { mode: 'number' }),
     outputFormat: text('output_format'),
     outputSchema: text('output_schema'),
+    model: text('model'),
+    provider: text('provider'),
   },
   (table) => [
     index('idx_attempts_task').on(table.taskId, table.createdAt),

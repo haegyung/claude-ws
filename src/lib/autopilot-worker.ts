@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { createLogger } from './logger';
 import { validateAttemptCompletion } from './autopilot-attempt-completion-validator';
+import { activityTracker } from './autopilot-activity-tracker';
 
 const log = createLogger('AutopilotWorker');
 const SWEEP_INTERVAL_MS = 30_000; // 30 seconds
@@ -82,24 +83,20 @@ export class AutopilotWorker {
       );
       if (hasLiveAgent) continue;
 
-      // If any attempt completed, validate before transitioning
-      const hasCompleted = attempts.some((a: any) => a.status === 'completed');
-      if (hasCompleted) {
-        const validation = await validateAttemptCompletion(task.id, db, schema);
-        if (validation.valid) {
-          await db
-            .update(schema.tasks)
-            .set({ status: 'in_review', updatedAt: Date.now() })
-            .where(eq(schema.tasks.id, task.id));
-          recoveredTasks++;
-        } else {
-          log.info(
-            { taskId: task.id, reason: validation.reason },
-            'Startup: task incomplete, keeping in_progress',
-          );
-        }
+      // After restart, no live agent → keep in_progress and let autopilot retry.
+      // Don't auto-promote to in_review — the task may have been interrupted mid-work.
+      const latestAttempt = attempts.reduce((latest: any, a: any) =>
+        (a.createdAt || 0) > (latest.createdAt || 0) ? a : latest,
+      );
+      log.info(
+        { taskId: task.id, latestStatus: latestAttempt.status },
+        'Startup: no live agent, keeping in_progress for autopilot retry',
+      );
+      const { autopilotManager } = this.deps;
+      if (autopilotManager.isEnabled()) {
+        await autopilotManager.onTaskFinished(task.id, latestAttempt.status, this.deps);
+        recoveredTasks++;
       }
-      // failed/cancelled only → keep in_progress for manual retry
     }
 
     log.info(
@@ -148,24 +145,41 @@ export class AutopilotWorker {
 
     if (attempts.length === 0) return;
 
-    // If ANY attempt has a live agent, the task is still actively being worked on — skip
+    // If ANY attempt has a live agent, check for idle timeout before skipping
     const hasLiveAgent = attempts.some(
       (a: any) => a.status === 'running' && agentManager.isRunning(a.id),
     );
-    if (hasLiveAgent) return;
+    if (hasLiveAgent) {
+      const { autopilotManager } = this.deps;
+      if (autopilotManager.isEnabled()) {
+        const latestRunning = attempts.find(
+          (a: any) => a.status === 'running' && agentManager.isRunning(a.id),
+        );
+        if (latestRunning) {
+          const timeoutMs = autopilotManager.getIdleTimeoutMs();
+          if (activityTracker.isIdle(latestRunning.id, timeoutMs)) {
+            log.warn(
+              { taskId: task.id, attemptId: latestRunning.id, timeoutMs },
+              'Idle timeout exceeded, cancelling stale attempt'
+            );
+            agentManager.cancel(latestRunning.id);
+            await db.update(schema.attempts)
+              .set({ status: 'failed', completedAt: Date.now() })
+              .where(eq(schema.attempts.id, latestRunning.id));
+            activityTracker.remove(latestRunning.id);
+            await this.recoverTask(task, { ...latestRunning, status: 'failed' });
+          }
+        }
+      }
+      return;
+    }
 
     // Get latest attempt by createdAt (don't rely on array order)
     const latestAttempt = attempts.reduce((latest: any, a: any) =>
       (a.createdAt || 0) > (latest.createdAt || 0) ? a : latest,
     );
 
-    // Case 1: Attempt completed/failed in DB, no live agents → recover
-    if (latestAttempt.status === 'completed' || latestAttempt.status === 'failed') {
-      await this.recoverTask(task, latestAttempt);
-      return;
-    }
-
-    // Case 2: Attempt 'running' in DB but agent is dead → mark as failed, then recover
+    // Attempt 'running' in DB but agent is dead → mark as failed first
     if (latestAttempt.status === 'running' && !agentManager.isRunning(latestAttempt.id)) {
       await db
         .update(schema.attempts)
@@ -176,42 +190,30 @@ export class AutopilotWorker {
         { taskId: task.id, attemptId: latestAttempt.id },
         'Marked orphaned attempt as failed',
       );
-
-      await this.recoverTask(task, { ...latestAttempt, status: 'failed' });
     }
+
+    // No live agent → delegate to autopilot for retry (keeps in_progress)
+    await this.recoverTask(task, { ...latestAttempt, status: latestAttempt.status === 'running' ? 'failed' : latestAttempt.status });
   }
 
   private async recoverTask(task: any, attempt: any): Promise<void> {
-    const { db, schema, autopilotManager, io } = this.deps;
-    const isAutopilot = autopilotManager.isEnabled();
+    const { autopilotManager, io } = this.deps;
 
-    if (isAutopilot) {
-      // Delegate to autopilot's validation + retry/pick-next logic
-      await autopilotManager.onTaskFinished(task.id, attempt.status, this.deps);
-    } else if (attempt.status === 'completed') {
-      // Validate the attempt actually did meaningful work
-      const validation = await autopilotManager.validateAttemptCompletion(task.id, this.deps);
-
-      if (validation.valid) {
-        await db
-          .update(schema.tasks)
-          .set({ status: 'in_review', updatedAt: Date.now() })
-          .where(eq(schema.tasks.id, task.id));
-        log.info({ taskId: task.id }, 'Recovered orphan task → in_review');
-      } else {
-        log.info(
-          { taskId: task.id, reason: validation.reason },
-          'Orphan task incomplete, keeping in_progress for retry',
-        );
-      }
+    // Sweep-recovered tasks always retry — never auto-promote to in_review.
+    // Only the real-time exit handler (server.ts agentManager.on('exit')) should
+    // move tasks to in_review. The sweep handles orphans after crashes/restarts.
+    if (autopilotManager.isEnabled()) {
+      // Force status to 'failed' so onTaskFinished triggers retry, not completion
+      await autopilotManager.onTaskFinished(task.id, 'failed', this.deps);
     }
-    // Non-autopilot failed → keep in_progress for manual retry
+    // Non-autopilot → keep in_progress for manual retry
 
     // Emit events so frontend updates
     io.emit('task:finished', { taskId: task.id, status: attempt.status });
 
-    const updatedTask = await db.query.tasks.findFirst({
-      where: eq(schema.tasks.id, task.id),
+    const { db: workerDb, schema: workerSchema } = this.deps;
+    const updatedTask = await workerDb.query.tasks.findFirst({
+      where: eq(workerSchema.tasks.id, task.id),
     });
     if (updatedTask) {
       io.emit('task:updated', updatedTask);

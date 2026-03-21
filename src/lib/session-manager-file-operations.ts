@@ -14,20 +14,48 @@ import { createLogger } from './logger';
 const log = createLogger('SessionFileOps');
 
 /**
- * Get the file path for a session ID by scanning ~/.claude/projects
- * Returns null if file doesn't exist
+ * Get the file path for a session ID by scanning known session directories.
+ * Searches ~/.claude/projects AND data/projects/{id}/data/claude-sdk-isolated-config/projects
+ * SDK uses isolated config dirs per project — session files live there, not in ~/.claude
  */
 export function getSessionFilePath(sessionId: string): string | null {
+  const fileName = `${sessionId}.jsonl`;
+
+  // 1. Search ~/.claude/projects (standard Claude Code sessions)
   const claudeDir = path.join(os.homedir(), '.claude');
-  const projectsDir = path.join(claudeDir, 'projects');
+  const claudeProjectsDir = path.join(claudeDir, 'projects');
+  const found = searchSessionInDir(claudeProjectsDir, fileName);
+  if (found) return found;
 
-  if (!fs.existsSync(projectsDir)) return null;
-
-  const projectDirs = fs.readdirSync(projectsDir);
-  for (const projectDir of projectDirs) {
-    const candidatePath = path.join(projectsDir, projectDir, `${sessionId}.jsonl`);
-    if (fs.existsSync(candidatePath)) return candidatePath;
+  // 2. Search data/projects/*/data/claude-sdk-isolated-config/projects (SDK isolated sessions)
+  const dataDir = process.env.DATA_DIR || './data';
+  const dataProjectsDir = path.join(dataDir, 'projects');
+  if (fs.existsSync(dataProjectsDir)) {
+    try {
+      const projectDirs = fs.readdirSync(dataProjectsDir);
+      for (const projectDir of projectDirs) {
+        const isolatedProjectsDir = path.join(
+          dataProjectsDir, projectDir, 'data', 'claude-sdk-isolated-config', 'projects'
+        );
+        const foundInIsolated = searchSessionInDir(isolatedProjectsDir, fileName);
+        if (foundInIsolated) return foundInIsolated;
+      }
+    } catch { /* directory read error */ }
   }
+
+  return null;
+}
+
+/** Search for a session file in a projects directory (one level of subdirs) */
+function searchSessionInDir(projectsDir: string, fileName: string): string | null {
+  if (!fs.existsSync(projectsDir)) return null;
+  try {
+    const subDirs = fs.readdirSync(projectsDir);
+    for (const subDir of subDirs) {
+      const candidatePath = path.join(projectsDir, subDir, fileName);
+      if (fs.existsSync(candidatePath)) return candidatePath;
+    }
+  } catch { /* directory read error */ }
   return null;
 }
 

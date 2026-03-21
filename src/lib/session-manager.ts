@@ -41,22 +41,18 @@ export class SessionManager {
 
   /**
    * Get the last session ID for a task (for resume).
-   * Returns sessions from completed or cancelled attempts ONLY.
-   *
-   * NOTE: Failed attempts are excluded because they may have empty/corrupted
-   * session files. When an attempt fails during init the session file may be
-   * empty or have only queue operations, causing Claude Code to exit with code 1
-   * on resume. Retrying after a failure starts a fresh session instead.
+   * Includes failed attempts — autopilot retryTask resumes from any prior session.
+   * getSessionOptionsWithAutoFix validates and auto-fixes corrupted session files.
    */
   async getLastSessionId(taskId: string): Promise<string | null> {
-    const lastResumableAttempt = await db.query.attempts.findFirst({
+    const lastAttemptWithSession = await db.query.attempts.findFirst({
       where: and(
         eq(schema.attempts.taskId, taskId),
-        inArray(schema.attempts.status, ['completed', 'cancelled'])
+        inArray(schema.attempts.status, ['completed', 'cancelled', 'failed'])
       ),
       orderBy: [desc(schema.attempts.createdAt)],
     });
-    return lastResumableAttempt?.sessionId ?? null;
+    return lastAttemptWithSession?.sessionId ?? null;
   }
 
   /**

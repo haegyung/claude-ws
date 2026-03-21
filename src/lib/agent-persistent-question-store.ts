@@ -11,6 +11,8 @@ export interface PersistentQuestionData {
   toolUseId: string;
   questions: unknown[];
   timestamp: number;
+  answer?: Record<string, string>;
+  answeredAt?: number;
 }
 
 /**
@@ -27,6 +29,16 @@ export class PersistentQuestionStore {
   /** Retrieve persisted question data for a task, or null if absent */
   get(taskId: string): PersistentQuestionData | null {
     return this.store.get(taskId) || null;
+  }
+
+  /** Store answer for a pending question (idempotent — returns false if no question exists) */
+  setAnswer(taskId: string, answer: Record<string, string>): boolean {
+    const data = this.store.get(taskId);
+    if (!data) return false;
+    data.answer = answer;
+    data.answeredAt = Date.now();
+    this.store.set(taskId, data);
+    return true;
   }
 
   /** Remove persisted question data for a task */

@@ -67,6 +67,12 @@ export function runAttemptsMigrations(sqlite: InstanceType<typeof Database>): vo
     { name: 'output_format', type: 'TEXT' },
     { name: 'output_schema', type: 'TEXT' },
   ]);
+
+  // Model and provider for retry with correct config
+  addColumnsIfNotExist(sqlite, 'attempts', [
+    { name: 'model', type: 'TEXT' },
+    { name: 'provider', type: 'TEXT' },
+  ]);
 }
 
 /**

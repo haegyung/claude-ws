@@ -59,8 +59,9 @@ export function useStreamingIdleDetector(
 function buildFingerprint(messages: ClaudeOutput[]): string {
   if (messages.length === 0) return '0';
   const last = messages[messages.length - 1];
-  const contentLen = last.message?.content
-    ? last.message.content.reduce((acc, b) => acc + ('text' in b ? (b.text?.length ?? 0) : 0), 0)
-    : 0;
+  const content = last.message?.content;
+  const contentLen = Array.isArray(content)
+    ? content.reduce((acc, b) => acc + ('text' in b ? (b.text?.length ?? 0) : 0), 0)
+    : typeof content === 'string' ? content.length : 0;
   return `${messages.length}:${last.type}:${contentLen}`;
 }

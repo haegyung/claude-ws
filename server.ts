@@ -50,6 +50,7 @@ import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
 import { autopilotManager } from './src/lib/autopilot';
 import { AutopilotWorker } from './src/lib/autopilot-worker';
+import { activityTracker } from './src/lib/autopilot-activity-tracker';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
@@ -351,6 +352,8 @@ app.prepare().then(async () => {
             status: 'running',
             outputFormat: outputFormat || null,
             outputSchema: outputSchema || null,
+            model: model || null,
+            provider: provider || null,
           });
 
 
@@ -499,13 +502,15 @@ app.prepare().then(async () => {
         const { attemptId, toolUseId, questions, answers } = data;
         log.info({ attemptId, answers }, '[Server] Received answer');
 
-        // Clear persistent question for this task (user has answered)
+        // Persist answer in store (lookup taskId from attempt)
+        let taskIdForQuestion: string | null = null;
         try {
           const attempt = await db.query.attempts.findFirst({
             where: eq(schema.attempts.id, attemptId),
           });
           if (attempt) {
-            agentManager.clearPersistentQuestion(attempt.taskId);
+            taskIdForQuestion = attempt.taskId;
+            agentManager.questionStore.setAnswer(attempt.taskId, answers);
           }
         } catch { /* non-critical */ }
 
@@ -514,6 +519,7 @@ app.prepare().then(async () => {
           // Resolve the pending Promise - SDK will resume streaming
           const success = agentManager.answerQuestion(attemptId, toolUseId, questions, answers);
           if (success) {
+            if (taskIdForQuestion) agentManager.clearPersistentQuestion(taskIdForQuestion);
             log.info(`[Server] Resumed streaming for ${attemptId}`);
           } else {
             log.error(`[Server] Failed to answer question for ${attemptId}`);
@@ -590,6 +596,9 @@ app.prepare().then(async () => {
 
             // Emit attempt:started to the client so the UI knows a new attempt started
             socket.emit('attempt:started', { attemptId: newAttemptId, taskId: attempt.taskId });
+
+            // Clear persistent question now that answer is delivered via new attempt
+            if (taskIdForQuestion) agentManager.clearPersistentQuestion(taskIdForQuestion);
 
             log.warn(`[Server] Auto-retried answer for ${attemptId} as new attempt ${newAttemptId}`);
           } catch (error) {
@@ -961,9 +970,16 @@ app.prepare().then(async () => {
   // Forward AgentManager events to WebSocket clients
   agentManager.on('started', ({ attemptId, taskId }) => {
     log.info(`[Server] Agent started for attempt ${attemptId}, task ${taskId}`);
-    // Emit to all clients so they can subscribe if they're viewing this task
     io.emit('attempt:started', { attemptId, taskId });
+    activityTracker.recordActivity(attemptId);
   });
+
+  // Track activity for idle timeout detection
+  for (const event of ['json', 'stderr', 'question', 'backgroundShell'] as const) {
+    agentManager.on(event, ({ attemptId }: { attemptId: string }) => {
+      activityTracker.recordActivity(attemptId);
+    });
+  }
 
   agentManager.on('json', async ({ attemptId, data }) => {
     // Skip saving streaming deltas - they're intermediate state
@@ -1318,6 +1334,8 @@ app.prepare().then(async () => {
 
   // Register exit event handler
   agentManager.on('exit', async ({ attemptId, code }) => {
+    activityTracker.remove(attemptId);
+
     // Get attempt to retrieve taskId and current status
     const attempt = await db.query.attempts.findFirst({
       where: eq(schema.attempts.id, attemptId),
@@ -1339,16 +1357,13 @@ app.prepare().then(async () => {
     const gitStatsData = gitStatsCache.get(attemptId);
 
     // Update attempt with status and usage stats
-    // IMPORTANT: Clear session_id on failure to prevent next attempt from resuming
-    // a corrupted/empty session. Failed sessions may have incomplete data that causes
-    // Claude Code to exit with code 1 when resuming.
+    // Keep session_id on failure — autopilot retryTask will attempt to resume
+    // from the last session. getSessionOptionsWithAutoFix handles corrupted sessions.
     await db
       .update(schema.attempts)
       .set({
         status,
         completedAt: Date.now(),
-        // Clear session_id on failure - prevents resume from corrupted sessions
-        ...(status === 'failed' && { sessionId: null }),
         // Save usage stats
         ...(usageStats && {
           totalTokens: usageStats.totalTokens,
@@ -1451,34 +1466,23 @@ app.prepare().then(async () => {
           db, io, schema, agentManager, sessionManager,
         });
       } else if (status === 'completed') {
-        // Non-autopilot: validate attempt did real work before moving to in_review
+        // Non-autopilot: trust SDK completion — move to in_review directly
         const task = await db.query.tasks.findFirst({
           where: eq(schema.tasks.id, attempt.taskId),
         });
         if (task && task.status === 'in_progress') {
-          const validation = await autopilotManager.validateAttemptCompletion(
-            attempt.taskId,
-            { db, io, schema, agentManager, sessionManager },
-          );
+          await db
+            .update(schema.tasks)
+            .set({ status: 'in_review', updatedAt: Date.now() })
+            .where(eq(schema.tasks.id, attempt.taskId));
 
-          if (validation.valid) {
-            await db
-              .update(schema.tasks)
-              .set({ status: 'in_review', updatedAt: Date.now() })
-              .where(eq(schema.tasks.id, attempt.taskId));
-
-            const updatedTask = await db.query.tasks.findFirst({
-              where: eq(schema.tasks.id, attempt.taskId),
-            });
-            if (updatedTask) {
-              io.emit('task:updated', updatedTask);
-            }
-            log.info(`[Server] Non-autopilot task ${attempt.taskId} -> in_review`);
-          } else {
-            log.info(
-              `[Server] Non-autopilot task ${attempt.taskId} incomplete: ${validation.reason}, keeping in_progress`,
-            );
+          const updatedTask = await db.query.tasks.findFirst({
+            where: eq(schema.tasks.id, attempt.taskId),
+          });
+          if (updatedTask) {
+            io.emit('task:updated', updatedTask);
           }
+          log.info(`[Server] Non-autopilot task ${attempt.taskId} -> in_review`);
         }
       }
       // Non-autopilot failed: keep in_progress for manual retry

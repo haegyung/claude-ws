@@ -93,13 +93,17 @@ export class ClaudeSDKProvider extends EventEmitter implements Provider {
         canUseToolCallback: this.makeCanUseTool(attemptId),
       });
 
+      // Strip leading "/" to prevent Claude Code CLI from interpreting prompts as slash commands
+      // (e.g., "/plan a trip" would be treated as the /plan CLI command, not user input)
+      const safePrompt = prompt.startsWith('/') ? prompt.slice(1) : prompt;
+
       log.info({
         endpoint: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-        prompt: prompt.substring(0, 200) + (prompt.length > 200 ? '...' : ''),
+        prompt: safePrompt.substring(0, 200) + (safePrompt.length > 200 ? '...' : ''),
         model: opts.model, cwd: opts.cwd,
       }, 'SDK Query starting');
 
-      const response = query({ prompt, options: opts });
+      const response = query({ prompt: safePrompt, options: opts });
       session.queryRef = response;
 
       for await (const message of response) {

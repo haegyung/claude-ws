@@ -23,6 +23,11 @@ export async function reorderTasksAction(
   const task = oldTasks.find((t) => t.id === taskId);
   if (!task) return;
 
+  // Force top position when moving from in_progress to in_review
+  if (task.status === 'in_progress' && newStatus === 'in_review') {
+    newPosition = 0;
+  }
+
   const tasksInNewColumn = oldTasks
     .filter((t) => t.status === newStatus && t.id !== taskId)
     .sort((a, b) => a.position - b.position);

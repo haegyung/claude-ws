@@ -1,6 +1,6 @@
 import { createLogger } from './logger';
 import { nanoid } from 'nanoid';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, desc } from 'drizzle-orm';
 import { validateAttemptCompletion } from './autopilot-attempt-completion-validator';
 
 const log = createLogger('Autopilot');
@@ -16,14 +16,19 @@ interface AutopilotDeps {
   sessionManager: any;
 }
 
+export type AutopilotMode = 'off' | 'fully-autonomous' | 'auto-resume';
+
 interface AutopilotStatus {
   enabled: boolean;
   allowAskUser: boolean;
+  mode: AutopilotMode;
   phase: 'idle' | 'planning' | 'processing';
   currentTaskId: string | null;
   processedCount: number;
   retryCount: number;
   skippedTaskIds: string[];
+  questionPhase: 'gathering' | 'autonomous' | 'interactive' | 'idle';
+  idleTimeoutSeconds: number;
 }
 
 /** Context the master agent keeps for each running task */
@@ -35,14 +40,20 @@ interface TaskContext {
   description: string;
   allTodoTitles: string[];
   completedTitles: string[];
+  questionPhase: 'gathering' | 'autonomous' | 'interactive';
 }
 
 export class AutopilotManager {
-  /** Workspace-wide autopilot toggle — default enabled */
-  private _enabled = true;
+  /** Autopilot mode: off, fully-autonomous, or auto-resume */
+  private _mode: AutopilotMode = 'fully-autonomous';
 
-  /** Allow AskUserQuestion tool in autopilot mode — default false */
-  private _allowAskUser = false;
+  /** Idle timeout in seconds — agent with no activity beyond this is considered stuck */
+  private _idleTimeoutSeconds = 60;
+
+  /** Derived: is autopilot enabled */
+  get _enabled(): boolean { return this._mode !== 'off'; }
+  /** Derived: is AskUserQuestion allowed (auto-resume mode) */
+  get _allowAskUser(): boolean { return this._mode === 'auto-resume'; }
 
   private retryCounts = new Map<string, number>();
   private currentTaskId = new Map<string, string>();
@@ -79,29 +90,54 @@ export class AutopilotManager {
     return this._allowAskUser;
   }
 
-  async enableAskUser(db: any, schema: any): Promise<void> {
-    this._allowAskUser = true;
-    await db
-      .insert(schema.appSettings)
-      .values({ key: 'autopilot_allow_ask_user', value: 'true', updatedAt: Date.now() })
-      .onConflictDoUpdate({
-        target: schema.appSettings.key,
-        set: { value: 'true', updatedAt: Date.now() },
-      });
-    log.info('Autopilot: AskUserQuestion enabled');
+  /** Get idle timeout in milliseconds */
+  getIdleTimeoutMs(): number {
+    return this._idleTimeoutSeconds * 1000;
   }
 
-  async disableAskUser(db: any, schema: any): Promise<void> {
-    this._allowAskUser = false;
-    await db
-      .insert(schema.appSettings)
-      .values({ key: 'autopilot_allow_ask_user', value: 'false', updatedAt: Date.now() })
+  /** Set idle timeout and persist to DB */
+  async setIdleTimeout(db: any, schema: any, seconds: number): Promise<void> {
+    this._idleTimeoutSeconds = seconds;
+    await db.insert(schema.appSettings)
+      .values({ key: 'autopilot_idle_timeout_seconds', value: String(seconds), updatedAt: Date.now() })
       .onConflictDoUpdate({
         target: schema.appSettings.key,
-        set: { value: 'false', updatedAt: Date.now() },
+        set: { value: String(seconds), updatedAt: Date.now() },
       });
-    log.info('Autopilot: AskUserQuestion disabled');
+    log.info({ seconds }, 'Autopilot: idle timeout updated');
   }
+
+  /** Get current autopilot mode */
+  getMode(): AutopilotMode { return this._mode; }
+
+  /** Set autopilot mode and persist to DB */
+  async setMode(db: any, schema: any, mode: AutopilotMode): Promise<void> {
+    const wasEnabled = this._enabled;
+    this._mode = mode;
+
+    await db.insert(schema.appSettings)
+      .values({ key: 'autopilot_mode', value: mode, updatedAt: Date.now() })
+      .onConflictDoUpdate({
+        target: schema.appSettings.key,
+        set: { value: mode, updatedAt: Date.now() },
+      });
+
+    // Clean up contexts when switching to off
+    if (mode === 'off' && wasEnabled) {
+      for (const [, ctx] of this.taskContexts) {
+        if (ctx.attemptId) this.restartCommandAttempts.delete(ctx.attemptId);
+      }
+      this.currentTaskId.clear();
+      this.taskContexts.clear();
+      this.phase.clear();
+    }
+
+    log.info({ mode }, 'Autopilot: mode changed');
+  }
+
+  // Legacy methods — delegate to setMode for backward compatibility
+  async enableAskUser(db: any, schema: any): Promise<void> { await this.setMode(db, schema, 'auto-resume'); }
+  async disableAskUser(db: any, schema: any): Promise<void> { await this.setMode(db, schema, 'fully-autonomous'); }
 
   /** Set runtime deps (io, agentManager, sessionManager) — called once from server.ts */
   setDeps(deps: { io: any; agentManager: any; sessionManager: any }): void {
@@ -114,77 +150,62 @@ export class AutopilotManager {
   }
 
   async enable(db: any, schema: any): Promise<void> {
-    this._enabled = true;
-
-    await db
-      .insert(schema.appSettings)
-      .values({
-        key: 'autopilot_enabled',
-        value: 'true',
-        updatedAt: Date.now(),
-      })
-      .onConflictDoUpdate({
-        target: schema.appSettings.key,
-        set: { value: 'true', updatedAt: Date.now() },
-      });
-
-    log.info('Autopilot enabled (workspace-wide)');
+    // Preserve current sub-mode when re-enabling
+    if (this._mode === 'off') await this.setMode(db, schema, 'fully-autonomous');
   }
 
   async disable(db: any, schema: any): Promise<void> {
-    this._enabled = false;
-
-    // Clean up all project contexts
-    for (const [, ctx] of this.taskContexts) {
-      if (ctx.attemptId) {
-        this.restartCommandAttempts.delete(ctx.attemptId);
-      }
-    }
-    this.currentTaskId.clear();
-    this.taskContexts.clear();
-    this.phase.clear();
-
-    await db
-      .insert(schema.appSettings)
-      .values({
-        key: 'autopilot_enabled',
-        value: 'false',
-        updatedAt: Date.now(),
-      })
-      .onConflictDoUpdate({
-        target: schema.appSettings.key,
-        set: { value: 'false', updatedAt: Date.now() },
-      });
-
-    log.info('Autopilot disabled (workspace-wide)');
+    await this.setMode(db, schema, 'off');
   }
 
   async restoreFromSettings(db: any, schema: any): Promise<void> {
     try {
-      const setting = await db
+      // Restore mode (new unified setting)
+      const modeSetting = await db
         .select()
         .from(schema.appSettings)
-        .where(eq(schema.appSettings.key, 'autopilot_enabled'))
+        .where(eq(schema.appSettings.key, 'autopilot_mode'))
         .limit(1);
 
-      if (setting.length > 0) {
-        this._enabled = setting[0].value === 'true';
-        log.info({ enabled: this._enabled }, 'Restored autopilot state from DB');
+      if (modeSetting.length > 0) {
+        const mode = modeSetting[0].value as AutopilotMode;
+        if (['off', 'fully-autonomous', 'auto-resume'].includes(mode)) {
+          this._mode = mode;
+        }
+        log.info({ mode: this._mode }, 'Restored autopilot mode from DB');
       } else {
-        // No DB setting yet — keep default (enabled)
-        log.info('No autopilot setting in DB, using default: enabled');
+        // Migrate from old boolean settings
+        const enabledSetting = await db
+          .select()
+          .from(schema.appSettings)
+          .where(eq(schema.appSettings.key, 'autopilot_enabled'))
+          .limit(1);
+        const askUserSetting = await db
+          .select()
+          .from(schema.appSettings)
+          .where(eq(schema.appSettings.key, 'autopilot_allow_ask_user'))
+          .limit(1);
+
+        const wasEnabled = enabledSetting.length === 0 || enabledSetting[0].value === 'true';
+        const wasAskUser = askUserSetting.length > 0 && askUserSetting[0].value === 'true';
+
+        if (!wasEnabled) this._mode = 'off';
+        else if (wasAskUser) this._mode = 'auto-resume';
+        else this._mode = 'fully-autonomous';
+
+        log.info({ mode: this._mode }, 'Migrated autopilot mode from legacy settings');
       }
 
-      // Restore allowAskUser setting
-      const askUserSetting = await db
+      // Restore idle timeout setting
+      const idleSetting = await db
         .select()
         .from(schema.appSettings)
-        .where(eq(schema.appSettings.key, 'autopilot_allow_ask_user'))
+        .where(eq(schema.appSettings.key, 'autopilot_idle_timeout_seconds'))
         .limit(1);
 
-      if (askUserSetting.length > 0) {
-        this._allowAskUser = askUserSetting[0].value === 'true';
-        log.info({ allowAskUser: this._allowAskUser }, 'Restored autopilot allowAskUser from DB');
+      if (idleSetting.length > 0) {
+        this._idleTimeoutSeconds = parseInt(idleSetting[0].value, 10) || 60;
+        log.info({ idleTimeoutSeconds: this._idleTimeoutSeconds }, 'Restored autopilot idle timeout from DB');
       }
 
       // Clean up old per-project keys (migration)
@@ -216,7 +237,7 @@ export class AutopilotManager {
       questions: unknown[];
     }) => {
       if (!this._enabled) return;
-      // When allowAskUser is on, let questions through to the user
+      // When allowAskUser is on (interactive mode), let questions through
       if (this._allowAskUser) return;
 
       const projectId = this.attemptToProject.get(attemptId);
@@ -225,12 +246,39 @@ export class AutopilotManager {
       const ctx = this.taskContexts.get(projectId);
       if (!ctx || ctx.attemptId !== attemptId) return;
 
+      if (ctx.questionPhase === 'gathering') {
+        // Allow question during gathering phase — don't suppress
+        log.info(
+          { attemptId, taskId: ctx.taskId, questionCount: questions?.length },
+          'Autopilot: question allowed (gathering phase)'
+        );
+        return;
+      }
+
+      // Autonomous phase — suppress
       log.info(
         { attemptId, taskId: ctx.taskId, questionCount: questions?.length },
-        'Autopilot: suppressing question (CLI auto-handles)'
+        'Autopilot: suppressing question (autonomous phase)'
       );
-
       agentManager.clearPersistentQuestion(ctx.taskId);
+    });
+
+    // Transition from gathering → autonomous when question is resolved
+    agentManager.on('questionResolved', ({ attemptId }: { attemptId: string }) => {
+      if (!this._enabled || this._allowAskUser) return;
+
+      const projectId = this.attemptToProject.get(attemptId);
+      if (!projectId) return;
+      const ctx = this.taskContexts.get(projectId);
+      if (!ctx || ctx.attemptId !== attemptId) return;
+
+      if (ctx.questionPhase === 'gathering') {
+        ctx.questionPhase = 'autonomous';
+        log.info(
+          { attemptId, taskId: ctx.taskId, projectId },
+          'Autopilot: transitioned to autonomous phase after Q&A'
+        );
+      }
     });
 
     agentManager.on('json', ({ attemptId, data }: { attemptId: string; data: any }) => {
@@ -277,27 +325,39 @@ export class AutopilotManager {
     const isAutopilotTask = this.currentTaskId.get(projectId) === taskId;
 
     if (!isAutopilotTask) {
-      // Manually started task — validate before moving to in_review
+      // Manually started task — trust SDK completion signal directly
       if (status === 'completed' && task.status === 'in_progress') {
-        const validation = await this.validateAttemptCompletion(taskId, deps);
+        await db
+          .update(schema.tasks)
+          .set({ status: 'in_review', updatedAt: Date.now() })
+          .where(eq(schema.tasks.id, taskId));
+        log.info({ taskId, projectId }, 'Autopilot: manually-started task → in_review');
+        await this.emitTaskUpdated(taskId, deps);
+      } else if (status === 'failed' && task.status === 'in_progress') {
+        // Manually started task failed — retry with same MAX_RETRIES guard
+        const retries = (this.retryCounts.get(taskId) || 0) + 1;
+        this.retryCounts.set(taskId, retries);
 
-        if (validation.valid) {
-          await db
-            .update(schema.tasks)
-            .set({ status: 'in_review', updatedAt: Date.now() })
-            .where(eq(schema.tasks.id, taskId));
-          log.info({ taskId, projectId }, 'Autopilot: manually-started task → in_review');
-          await this.emitTaskUpdated(taskId, deps);
-        } else {
-          log.info(
-            { taskId, projectId, reason: validation.reason },
-            'Autopilot: manually-started task incomplete, resuming',
-          );
-          // Resume by creating a new attempt
+        if (retries < MAX_RETRIES) {
+          log.info({ taskId, projectId, retries, maxRetries: MAX_RETRIES },
+            'Autopilot: manually-started task failed, retrying');
           this.currentTaskId.set(projectId, taskId);
           setTimeout(() => {
             if (this._enabled) {
-              this.startTask(task, deps);
+              this.retryTask(task, deps);
+            }
+          }, PICK_DELAY_MS);
+        } else {
+          log.info({ taskId, projectId, retries },
+            'Autopilot: manually-started task max retries, skipping');
+          this.retryCounts.delete(taskId);
+          const skipped = this.skippedTaskIds.get(projectId) || [];
+          skipped.push(taskId);
+          this.skippedTaskIds.set(projectId, skipped);
+          // Pick next task if autopilot has queued work
+          setTimeout(() => {
+            if (this._enabled) {
+              this.pickNextTask(projectId, deps);
             }
           }, PICK_DELAY_MS);
         }
@@ -323,46 +383,7 @@ export class AutopilotManager {
     );
 
     if (effectiveStatus === 'completed') {
-      // Validate the attempt actually did meaningful work
-      const validation = await this.validateAttemptCompletion(taskId, deps);
-
-      if (!validation.valid) {
-        // Treat as failed — retry instead of moving to in_review
-        log.info(
-          { taskId, projectId, reason: validation.reason },
-          'Autopilot: attempt completed but validation failed, retrying',
-        );
-
-        const retries = (this.retryCounts.get(taskId) || 0) + 1;
-        this.retryCounts.set(taskId, retries);
-
-        if (retries < MAX_RETRIES) {
-          setTimeout(() => {
-            if (this._enabled) {
-              this.startTask(task, deps);
-            }
-          }, PICK_DELAY_MS);
-        } else {
-          log.info({ taskId, retries }, 'Autopilot: max retries after validation failure, skipping');
-          await db
-            .update(schema.tasks)
-            .set({ status: 'todo', updatedAt: Date.now() })
-            .where(eq(schema.tasks.id, taskId));
-          this.currentTaskId.delete(projectId);
-          this.retryCounts.delete(taskId);
-          const skipped = this.skippedTaskIds.get(projectId) || [];
-          skipped.push(taskId);
-          this.skippedTaskIds.set(projectId, skipped);
-          await this.emitTaskUpdated(taskId, deps);
-          setTimeout(() => {
-            if (this._enabled) {
-              this.pickNextTask(projectId, deps);
-            }
-          }, PICK_DELAY_MS);
-        }
-        return;
-      }
-
+      // Trust SDK completion signal — move directly to in_review
       await db
         .update(schema.tasks)
         .set({ status: 'in_review', updatedAt: Date.now() })
@@ -401,11 +422,9 @@ export class AutopilotManager {
           'Autopilot: retrying task'
         );
 
-  
-
         setTimeout(() => {
           if (this._enabled) {
-            this.startTask(task, deps);
+            this.retryTask(task, deps);
           }
         }, PICK_DELAY_MS);
       } else {
@@ -427,7 +446,7 @@ export class AutopilotManager {
         this.skippedTaskIds.set(projectId, skipped);
 
         await this.emitTaskUpdated(taskId, deps);
-  
+
 
         setTimeout(() => {
           if (this._enabled) {
@@ -472,12 +491,13 @@ export class AutopilotManager {
         description: '',
         allTodoTitles: todoTasks.map((t: any) => t.title),
         completedTitles: completedSoFar,
+        questionPhase: this._allowAskUser ? 'interactive' : 'gathering',
       });
 
       if (todoTasks.length <= 1) {
         log.info({ projectId, count: todoTasks.length }, 'Autopilot: skipping planning (<=1 tasks)');
         this.phase.set(projectId, 'processing');
-  
+
 
         if (this._enabled) {
           this.pickNextTask(projectId, deps);
@@ -616,7 +636,7 @@ Do not include any other text, just the JSON array.`;
           try {
             await db.delete(schema.attempts).where(eq(schema.attempts.taskId, planTaskId));
             await db.delete(schema.tasks).where(eq(schema.tasks.id, planTaskId));
-          } catch {}
+          } catch { }
         }
 
         this.phase.set(projectId, 'processing');
@@ -688,7 +708,59 @@ Do not include any other text, just the JSON array.`;
     await this.startTask(nextTask, deps);
   }
 
-  async startTask(task: any, deps: AutopilotDeps): Promise<void> {
+  /**
+   * Retry a failed task — resume prior session context if available,
+   * otherwise start fresh. Uses a continuation prompt so the agent
+   * picks up where the previous attempt left off.
+   */
+  async retryTask(task: any, deps: AutopilotDeps): Promise<void> {
+    const { db, schema, sessionManager } = deps;
+
+    // Get model/provider from the last attempt so retry uses same config
+    const lastAttempt = await db.query.attempts.findFirst({
+      where: eq(schema.attempts.taskId, task.id),
+      orderBy: [desc(schema.attempts.createdAt)],
+    });
+
+    // Use stored model/provider, fall back to env defaults
+    const envModel = process.env.ANTHROPIC_MODEL?.trim() || undefined;
+    const model = lastAttempt?.model || envModel;
+    // If model is non-Claude (custom), force SDK provider since CLI doesn't support custom models
+    const isCustomModel = model && !model.startsWith('claude-');
+    const provider = lastAttempt?.provider || (isCustomModel ? 'claude-sdk' : undefined);
+
+    // Try to resume from last valid session
+    const sessionOptions = await sessionManager.getSessionOptionsWithAutoFix(task.id);
+    const hasSession = !!(sessionOptions.resume || sessionOptions.resumeSessionAt);
+
+    try {
+      if (hasSession) {
+        log.info(
+          { taskId: task.id, sessionId: sessionOptions.resume, model, provider },
+          'Autopilot: retrying with session continuation',
+        );
+        const continuePrompt = `Your previous attempt on this task was interrupted. Review what you've already done and continue working to complete the task. Do not repeat work that's already been done — check the current state of files and pick up where you left off.`;
+        await this.startTask(task, deps, { sessionOptions, overridePrompt: continuePrompt, model, provider });
+      } else {
+        log.info({ taskId: task.id, model, provider }, 'Autopilot: retrying fresh (no prior session)');
+        await this.startTask(task, deps, { model, provider });
+      }
+    } catch (error) {
+      // Model/provider no longer available — fall back to defaults
+      log.warn(
+        { taskId: task.id, model, provider, error },
+        'Autopilot: retry failed with saved model/provider, falling back to defaults',
+      );
+      await this.startTask(task, deps);
+    }
+  }
+
+  async startTask(task: any, deps: AutopilotDeps, retryOptions?: {
+    sessionOptions?: { resume?: string; resumeSessionAt?: string };
+    overridePrompt?: string;
+    model?: string;
+    provider?: string;
+  }): Promise<void> {
     const { db, io, schema, agentManager } = deps;
     this.deps = deps;
 
@@ -716,27 +788,46 @@ Do not include any other text, just the JSON array.`;
       ? `\nRemaining tasks after this: ${ctx.allTodoTitles.join(', ')}`
       : '';
 
-    const askUserLine = this._allowAskUser
-      ? ''
-      : '\n- Do NOT use AskUserQuestion tool. There is no human available to answer.';
+    const isRetryWithSession = retryOptions?.sessionOptions?.resume;
 
-    const prompt = `${basePrompt}
+    let askUserLine = '';
+    let initialPhase: TaskContext['questionPhase'] = 'interactive';
 
-[AUTOPILOT MODE] You are running in fully autonomous mode. Important rules:${askUserLine}
-- Make all decisions yourself based on the task description.
-- If something is ambiguous, choose the most reasonable approach and proceed.
-- If you need to pick between options, choose what best fits the task goal.
-- For any permission or confirmation, proceed with YES/allow.
-- Complete the task fully without asking for clarification.${progressInfo}${remainingInfo}`;
+    if (!this._allowAskUser) {
+      // Skip gathering phase on retries — agent already asked questions in the original attempt
+      if (isRetryWithSession) {
+        initialPhase = 'autonomous';
+        askUserLine = `[AUTOPILOT MODE] You are running in fully autonomous mode. Do NOT use AskUserQuestion. Make all decisions yourself and complete the task.
+${progressInfo}${remainingInfo}`;
+      } else {
+        initialPhase = 'gathering';
+        askUserLine = `[AUTOPILOT MODE - GATHERING PHASE] You are about to run in autonomous mode.
+BEFORE you start working, ask ALL clarifying questions you have about this task in a SINGLE AskUserQuestion call.
+Include questions about:
+- Ambiguous requirements
+- Technical approach preferences
+- Any assumptions you're making
+After your questions are answered, you will proceed fully autonomously with NO further user interaction.
+If you have no questions, proceed immediately without calling AskUserQuestion.
+${progressInfo}${remainingInfo}`;
+      }
+    }
+
+    // For retries with session, use continuation prompt; otherwise use task prompt
+    const prompt = isRetryWithSession
+      ? `${retryOptions.overridePrompt || 'Continue working on this task.'}\n${askUserLine}`
+      : `${basePrompt}\n${askUserLine}`;
 
     await db.insert(schema.attempts).values({
       id: attemptId,
       taskId: task.id,
       prompt,
-      displayPrompt: basePrompt,
+      displayPrompt: isRetryWithSession ? 'Autopilot: resuming previous session' : basePrompt,
       status: 'running',
       outputFormat: null,
       outputSchema: null,
+      model: retryOptions?.model || null,
+      provider: retryOptions?.provider || null,
     });
 
     await db
@@ -758,21 +849,38 @@ Do not include any other text, just the JSON array.`;
       description: '',
       allTodoTitles: [],
       completedTitles: [],
+      questionPhase: initialPhase,
     };
     taskCtx.taskId = task.id;
     taskCtx.attemptId = attemptId;
     taskCtx.title = task.title;
     taskCtx.description = task.description || '';
+    taskCtx.questionPhase = initialPhase;
     this.taskContexts.set(projectId, taskCtx);
 
+    // 30s fallback: if no AskUserQuestion asked during gathering, auto-transition to autonomous
+    if (initialPhase === 'gathering') {
+      setTimeout(() => {
+        const currentCtx = this.taskContexts.get(projectId);
+        if (currentCtx?.attemptId === attemptId && currentCtx.questionPhase === 'gathering') {
+          currentCtx.questionPhase = 'autonomous';
+          log.info({ taskId: task.id }, 'Autopilot: auto-transitioned to autonomous (no questions within 30s)');
+        }
+      }, 30_000);
+    }
+
+    const sessionOpts = retryOptions?.sessionOptions;
     agentManager.start({
       attemptId,
       projectPath: project.path,
       prompt,
+      ...(retryOptions?.model && { model: retryOptions.model }),
+      ...(retryOptions?.provider && { provider: retryOptions.provider }),
+      ...(sessionOpts && Object.keys(sessionOpts).length > 0 && { sessionOptions: sessionOpts }),
     });
 
     log.info(
-      { projectId, taskId: task.id, attemptId },
+      { projectId, taskId: task.id, attemptId, questionPhase: initialPhase, hasSession: !!isRetryWithSession, model: retryOptions?.model, provider: retryOptions?.provider },
       'Autopilot: started task'
     );
 
@@ -807,9 +915,19 @@ Do not include any other text, just the JSON array.`;
       break;
     }
 
+    // Get question phase from first active task context
+    let questionPhase: AutopilotStatus['questionPhase'] = 'idle';
+    for (const [, ctx] of this.taskContexts) {
+      if (ctx.attemptId && this.currentTaskId.has(ctx.projectId)) {
+        questionPhase = ctx.questionPhase;
+        break;
+      }
+    }
+
     return {
       enabled: this._enabled,
       allowAskUser: this._allowAskUser,
+      mode: this._mode,
       phase: aggregatedPhase,
       currentTaskId: currentTask,
       processedCount: totalProcessed,
@@ -817,6 +935,8 @@ Do not include any other text, just the JSON array.`;
         ? this.retryCounts.get(currentTask) || 0
         : 0,
       skippedTaskIds: allSkipped,
+      questionPhase,
+      idleTimeoutSeconds: this._idleTimeoutSeconds,
     };
   }
 

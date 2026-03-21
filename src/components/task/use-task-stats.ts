@@ -20,21 +20,29 @@ export function useTaskStats(taskId?: string) {
   useEffect(() => {
     if (!taskId) return;
 
+    const controller = new AbortController();
+
     const fetchStats = async () => {
       try {
-        const res = await fetch(`/api/tasks/${taskId}/stats`);
+        const res = await fetch(`/api/tasks/${taskId}/stats`, {
+          signal: controller.signal,
+        });
         if (res.ok) {
           const data = await res.json();
           setTaskStats(data);
         }
-      } catch (error) {
-        console.error('Failed to fetch task stats:', error);
+      } catch {
+        // Silently ignore — polling retries in 5s anyway.
+        // Common causes: component unmount (AbortError), HMR rebuild, pm2 restart.
       }
     };
 
     fetchStats();
     const interval = setInterval(fetchStats, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [taskId]);
 
   return taskStats;

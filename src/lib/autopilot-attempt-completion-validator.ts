@@ -5,6 +5,7 @@
  * but didn't actually implement anything.
  */
 import { eq, and, desc } from 'drizzle-orm';
+import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from './logger';
 import { cliQuery } from './cli-query';
 
@@ -103,23 +104,50 @@ VERDICT: COMPLETED or VERDICT: INCOMPLETE
 REASON: <brief explanation>`;
 
   try {
-    // Resolve project CWD for the CLI query
+    // Resolve project CWD for the query
     const project = await db.query.projects.findFirst({
       where: eq(schema.projects.id, task.projectId),
     });
     const cwd = project?.path || process.cwd();
+    const providerId = task.lastProvider || 'claude-cli';
 
-    log.info({ taskId, attemptId: attempt.id, messageCount: recentMessages.length }, 'Running AI validation');
+    log.info({ taskId, attemptId: attempt.id, messageCount: recentMessages.length, provider: providerId }, 'Running AI validation');
 
-    const result = await cliQuery({
-      prompt: validationPrompt,
-      cwd,
-      maxTurns: 1,
-      noTools: true,
-      lite: true,
-    });
+    let response: string;
 
-    const response = result.text.trim();
+    if (providerId === 'claude-sdk') {
+      // Use SDK query with fast model (haiku)
+      const sdkResponse = sdkQuery({
+        prompt: validationPrompt,
+        options: {
+          cwd,
+          model: 'haiku',
+          maxTurns: 1,
+          allowedTools: [],
+          permissionMode: 'bypassPermissions' as const,
+        },
+      });
+      let text = '';
+      for await (const msg of sdkResponse) {
+        if ((msg as any).type === 'assistant' && (msg as any).message?.content) {
+          for (const block of (msg as any).message.content) {
+            if (block.type === 'text' && block.text) text += block.text;
+          }
+        }
+      }
+      response = text.trim();
+    } else {
+      // Use CLI with fast model (haiku)
+      const result = await cliQuery({
+        prompt: validationPrompt,
+        cwd,
+        model: 'claude-haiku-4-5-20251001',
+        maxTurns: 1,
+        noTools: true,
+        lite: true,
+      });
+      response = result.text.trim();
+    }
     const isCompleted = response.toUpperCase().includes('VERDICT: COMPLETED');
     const reasonMatch = response.match(/REASON:\s*(.+)/i);
     const reason = reasonMatch?.[1]?.trim() || response.substring(0, 200);
