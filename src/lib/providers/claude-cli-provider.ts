@@ -93,10 +93,25 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
     if (parsed.askUserQuestion) {
       const { toolUseId, questions } = parsed.askUserQuestion;
       session.setPendingQuestion({ toolUseId, questions, timestamp: Date.now() });
+      session.waitingForUserAnswer = true; // keep stdin open until user answers
       this.emit('question', { attemptId, toolUseId, questions });
     }
 
-    if (parsed.cliAutoHandledQuestion) session.setPendingQuestion(null);
+    // CLI auto-handled AskUserQuestion — clear pending, user's answer will
+    // be sent as a follow-up text message via stdin ("chat about this" approach)
+    if (parsed.cliAutoHandledQuestion) {
+      session.setPendingQuestion(null);
+      // Strip is_error from auto-handled response so the tool block doesn't show red
+      const output = parsed.messagePayload.output as unknown as Record<string, unknown>;
+      const msg = output?.message as { content?: Array<{ type: string; is_error?: boolean }> };
+      if (msg?.content) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_result' && block.is_error) {
+            delete block.is_error;
+          }
+        }
+      }
+    }
 
     this.emit('message', { attemptId, ...parsed.messagePayload });
 
@@ -112,8 +127,14 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
     }
 
     // Close stdin on result message so CLI process can exit naturally
-    // If background agents are active, delay close to allow their results to arrive
     if (parsed.isResultMessage) {
+      // Don't close stdin if user hasn't answered AskUserQuestion popup yet —
+      // keep the session alive so their answer can be sent as a follow-up message
+      if (session.waitingForUserAnswer) {
+        log.info({ attemptId }, 'Result received but waiting for user answer — keeping stdin open');
+        return;
+      }
+
       const activeAgents = session.activeBackgroundAgents || 0;
       if (activeAgents > 0) {
         log.info({ attemptId, activeAgents }, 'Result received but background agents still active, delaying stdin close');
@@ -139,25 +160,26 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
     }
   }
 
-  answerQuestion(attemptId: string, toolUseId: string | undefined, questions: unknown[], answers: Record<string, string>): boolean {
+  answerQuestion(attemptId: string, _toolUseId: string | undefined, _questions: unknown[], answers: Record<string, string>): boolean {
     const session = this.sessions.get(attemptId);
     if (!session) { log.warn({ attemptId }, 'answerQuestion: session not found'); return false; }
 
-    const pending = session.getPendingQuestion();
-    if (!pending) { log.info({ attemptId }, 'answerQuestion: no pending question'); return false; }
+    // CLI auto-handles AskUserQuestion internally, so we can't inject a tool_result.
+    // Instead, send user's answers as a follow-up text message via stdin
+    // (equivalent to "Chat about this" in CLI interactive mode).
+    const answerText = Object.entries(answers)
+      .map(([q, a]) => `Q: ${q}\nA: ${a}`)
+      .join('\n\n');
+    const prompt = `The user answered the previous question:\n${answerText}\n\nPlease continue based on these answers.`;
 
-    if (toolUseId && pending.toolUseId !== toolUseId) {
-      log.warn({ attemptId, expected: pending.toolUseId, received: toolUseId }, 'Rejecting stale answer');
-      return false;
-    }
-
-    const success = session.writeToolResult(pending.toolUseId, JSON.stringify({ questions, answers }));
+    const success = session.writeUserMessage(prompt);
     if (success) {
-      log.info({ attemptId, toolUseId: pending.toolUseId }, 'Answer sent to CLI via stdin');
+      log.info({ attemptId }, 'Answer sent to CLI as follow-up message via stdin');
+      session.waitingForUserAnswer = false; // allow stdin close on next result
       session.setPendingQuestion(null);
       this.emit('questionResolved', { attemptId });
     } else {
-      log.error({ attemptId, toolUseId: pending.toolUseId }, 'Failed to write answer to CLI stdin');
+      log.error({ attemptId }, 'Failed to write answer to CLI stdin (process may have exited)');
     }
     return success;
   }
@@ -168,7 +190,10 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
     const pending = session.getPendingQuestion();
     if (!pending) return false;
     const success = session.writeToolResult(pending.toolUseId, 'User cancelled');
-    if (success) { session.setPendingQuestion(null); this.emit('questionResolved', { attemptId }); }
+    if (success) {
+      session.setPendingQuestion(null);
+      this.emit('questionResolved', { attemptId });
+    }
     return success;
   }
 

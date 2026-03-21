@@ -481,11 +481,23 @@ app.prepare().then(async () => {
       socket.leave(`attempt:${data.attemptId}`);
     });
 
+    // Dedup guard — prevent processing the same answer twice (React double-renders, reconnects)
+    const answeredAttempts = new Set<string>();
+
     // Handle AskUserQuestion response - resolve pending canUseTool callback
     socket.on(
       'question:answer',
       async (data: { attemptId: string; toolUseId?: string; questions: unknown[]; answers: Record<string, string> }) => {
         const { attemptId, toolUseId, questions, answers } = data;
+
+        const dedupKey = `${attemptId}:${toolUseId || ''}`;
+        if (answeredAttempts.has(dedupKey)) {
+          log.warn({ attemptId, toolUseId }, '[Server] Duplicate answer ignored');
+          return;
+        }
+        answeredAttempts.add(dedupKey);
+        setTimeout(() => answeredAttempts.delete(dedupKey), 30_000); // cleanup after 30s
+
         log.info({ attemptId, answers }, '[Server] Received answer');
 
         // Clear persistent question for this task (user has answered)
@@ -498,20 +510,22 @@ app.prepare().then(async () => {
           }
         } catch { /* non-critical */ }
 
-        // Check if there's a pending question (canUseTool callback waiting)
-        if (agentManager.hasPendingQuestion(attemptId)) {
-          // Resolve the pending Promise - SDK will resume streaming
-          const success = agentManager.answerQuestion(attemptId, toolUseId, questions, answers);
-          if (success) {
+        // Try to answer directly:
+        // - SDK provider: resolves the blocking canUseTool Promise
+        // - CLI provider: sends answer as follow-up text message via stdin
+        let directlyAnswered = false;
+        if (agentManager.hasPendingQuestion(attemptId) || agentManager.isRunning(attemptId)) {
+          directlyAnswered = agentManager.answerQuestion(attemptId, toolUseId, questions, answers);
+          if (directlyAnswered) {
             log.info(`[Server] Resumed streaming for ${attemptId}`);
           } else {
-            log.error(`[Server] Failed to answer question for ${attemptId}`);
-            socket.emit('error', { message: 'Failed to answer question' });
+            log.warn(`[Server] Direct answer failed for ${attemptId}, falling through to auto-retry`);
           }
-        } else {
-          // No pending question - agent likely crashed or server restarted
-          // Auto-retry by creating a new attempt with the user's answer as the prompt
-          log.warn(`[Server] No pending question for ${attemptId}, attempting legacy flow`);
+        }
+
+        if (!directlyAnswered) {
+          // No active session or direct answer failed — auto-retry with new attempt
+          log.warn(`[Server] Auto-retrying answer for ${attemptId}`);
 
           try {
             // Look up the attempt to get taskId
@@ -569,11 +583,13 @@ app.prepare().then(async () => {
             // Join the socket to the new attempt room
             socket.join(`attempt:${newAttemptId}`);
 
-            // Start the agent
+            // Start the agent (preserve original model/provider from task)
             agentManager.start({
               attemptId: newAttemptId,
               projectPath: project.path,
               prompt: answerPrompt,
+              model: task.lastModel || undefined,
+              provider: (task.lastProvider as 'claude-cli' | 'claude-sdk') || undefined,
               sessionOptions,
             });
 
