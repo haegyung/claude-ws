@@ -182,7 +182,12 @@ export class AgentProvider extends EventEmitter {
       delete process.env.CLAUDECODE;
       delete process.env.CLAUDE_CODE_ENTRYPOINT;
 
+      // Use full path to node binary — spawn("node", ...) fails under PM2/systemd with nvm
+      // because PATH may not include the nvm bin directory. process.execPath is always absolute.
+      const nodeExecutable = process.execPath as 'node';
+
       const queryOptions = {
+        executable: nodeExecutable,
         cwd: projectPath,
         model: effectiveModel,
         permissionMode: 'bypassPermissions' as const,
@@ -216,7 +221,10 @@ export class AgentProvider extends EventEmitter {
         },
       };
 
-      log.info({ model: effectiveModel, cwd: projectPath, resume: sessionOptions?.resume }, 'SDK query starting');
+      log.info({
+        model: effectiveModel, cwd: projectPath, resume: sessionOptions?.resume,
+        nodeExec: nodeExecutable, pathExists: existsSync(projectPath),
+      }, 'SDK query starting');
 
       const response = query({
         prompt,
