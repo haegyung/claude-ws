@@ -5,7 +5,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { query, type Query } from '@anthropic-ai/claude-agent-sdk';
@@ -153,6 +153,13 @@ export class AgentProvider extends EventEmitter {
     const { controller } = session;
 
     try {
+      // Ensure projectPath (used as cwd for SDK subprocess) exists — spawn fails with
+      // misleading "executable not found" ENOENT if cwd is missing
+      if (!existsSync(projectPath)) {
+        log.warn({ projectPath, attemptId }, 'Project path missing, creating directory');
+        mkdirSync(projectPath, { recursive: true });
+      }
+
       const mcpConfig = loadMCPConfig(projectPath);
       const mcpWildcards = mcpConfig?.mcpServers ? Object.keys(mcpConfig.mcpServers).map(n => `mcp__${n}__*`) : [];
       // Use custom model from env if configured, otherwise resolve alias

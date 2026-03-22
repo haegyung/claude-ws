@@ -8,20 +8,22 @@ import { createProjectService } from '@agentic-sdk/services/project/project-crud
 import { createTaskService } from '@agentic-sdk/services/task/task-crud-and-reorder';
 import { createAttemptOrchestrator, AttemptValidationError } from '@agentic-sdk/services/attempt/attempt-creation-orchestrator';
 
-const orchestrator = createAttemptOrchestrator({
-  taskService: createTaskService(db),
-  projectService: createProjectService(db),
-  attemptService: createAttemptService(db),
-  forceCreateService: createForceCreateService(db),
-  sessionManager,
-  startAgent: (params) => agentManager.start(params),
-  defaultBasePath: process.env.CLAUDE_WS_USER_CWD || process.cwd(),
-});
+function getOrchestrator() {
+  return createAttemptOrchestrator({
+    taskService: createTaskService(db),
+    projectService: createProjectService(db),
+    attemptService: createAttemptService(db),
+    forceCreateService: createForceCreateService(db),
+    sessionManager,
+    startAgent: (params) => agentManager.start(params),
+    defaultBasePath: process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(),
+  });
+}
 
 // POST /api/attempts - Create a new attempt and start agent execution
 export async function POST(request: NextRequest) {
   try {
-    const result = await orchestrator.createAndRun(await request.json());
+    const result = await getOrchestrator().createAndRun(await request.json());
 
     if (result.type === 'file') {
       return new NextResponse(result.content, { headers: { 'Content-Type': result.contentType } });

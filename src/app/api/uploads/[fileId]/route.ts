@@ -6,11 +6,16 @@ import { getMimeType } from '@/lib/file-utils';
 import { createUploadService } from '@agentic-sdk/services/attempt/attempt-file-upload-storage';
 import { findUploadedFile } from '@agentic-sdk/services/upload/tmp-file-processor-and-cleanup';
 
-const uploadsDir = path.join(
-  process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(), 'data'),
-  'uploads'
-);
-const uploadService = createUploadService(db, uploadsDir);
+function getUploadsDir() {
+  return path.join(
+    process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(), 'data'),
+    'uploads'
+  );
+}
+
+function getUploadService() {
+  return createUploadService(db, getUploadsDir());
+}
 
 // GET /api/uploads/[fileId] - Serve uploaded file by record ID
 export async function GET(
@@ -19,6 +24,9 @@ export async function GET(
 ) {
   try {
     const { fileId } = await params;
+
+    const uploadsDir = getUploadsDir();
+    const uploadService = getUploadService();
 
     const record = await uploadService.getById(fileId);
     if (!record) {
@@ -62,6 +70,7 @@ export async function DELETE(
 ) {
   try {
     const { fileId } = await params;
+    const uploadService = getUploadService();
 
     const record = await uploadService.getById(fileId);
     if (!record) {

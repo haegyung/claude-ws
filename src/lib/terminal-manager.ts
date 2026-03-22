@@ -9,6 +9,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { existsSync, mkdirSync } from 'fs';
 import { nanoid } from 'nanoid';
 import { detectShell } from './terminal-shell-detect';
 import { createLogger } from './logger';
@@ -79,6 +80,12 @@ class TerminalManager extends EventEmitter {
     }
     const { projectId, cwd, cols = 80, rows = 24, shell } = options;
     const terminalId = nanoid();
+
+    // Ensure cwd exists — pty.spawn fails with "chdir(2) failed" if missing
+    if (!existsSync(cwd)) {
+      log.warn({ terminalId, cwd }, 'Terminal cwd missing, creating directory');
+      mkdirSync(cwd, { recursive: true });
+    }
 
     const shellConfig = shell
       ? { file: shell, args: [] as string[], env: { TERM: 'xterm-256color' } }

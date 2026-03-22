@@ -4,11 +4,16 @@ import { db } from '@/lib/db';
 import { createUploadService } from '@agentic-sdk/services/attempt/attempt-file-upload-storage';
 import { saveTmpFiles } from '@agentic-sdk/services/upload/tmp-file-processor-and-cleanup';
 
-const uploadsDir = path.join(
-  process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || process.cwd(), 'data'),
-  'uploads'
-);
-const uploadService = createUploadService(db, uploadsDir);
+function getUploadsDir() {
+  return path.join(
+    process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(), 'data'),
+    'uploads'
+  );
+}
+
+function getUploadService() {
+  return createUploadService(db, getUploadsDir());
+}
 
 // GET /api/uploads?attemptId=xxx - List uploaded files for an attempt
 export async function GET(request: NextRequest) {
@@ -20,7 +25,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'attemptId required' }, { status: 400 });
     }
 
-    const files = await uploadService.list(attemptId);
+    const files = await getUploadService().list(attemptId);
     return NextResponse.json({ files });
   } catch (error) {
     console.error('Failed to list uploads:', error);
@@ -51,7 +56,7 @@ export async function POST(request: NextRequest) {
     if (attemptId) {
       const file = files[0];
       const buffer = Buffer.from(await file.arrayBuffer());
-      const record = await uploadService.save(attemptId, {
+      const record = await getUploadService().save(attemptId, {
         filename: file.name,
         originalName: file.name,
         mimeType: file.type,
@@ -69,7 +74,7 @@ export async function POST(request: NextRequest) {
         mimetype: file.type || 'application/octet-stream',
       }))
     );
-    const results = await saveTmpFiles(uploadsDir, tmpFiles);
+    const results = await saveTmpFiles(getUploadsDir(), tmpFiles);
     return NextResponse.json({ files: results }, { status: 201 });
   } catch (error: any) {
     if (error.message?.includes('size exceeds') || error.message?.includes('File too large')) {

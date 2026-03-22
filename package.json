@@ -1,6 +1,6 @@
 {
   "name": "claude-ws",
-  "version": "0.4.1-beta.3",
+  "version": "0.4.1-beta.4",
   "private": false,
   "description": "AI-powered workspace for solo CEOs and indie builders — manage your entire business with AI agents, not just code. Kanban board, code editor, Git integration, claw agent hub, local-first SQLite.",
   "keywords": [
