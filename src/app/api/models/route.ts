@@ -9,19 +9,30 @@ import {
   Model,
 } from '@/lib/models';
 import { createLogger } from '@/lib/logger';
+import { findClaudePath } from '@/lib/cli-query';
 
 const log = createLogger('Models');
 
 const SELECTED_MODEL_KEY = 'selectedModel';
 
 /**
+ * Check if Claude CLI binary is available
+ */
+function isClaudeCLIAvailable(): boolean {
+  return !!findClaudePath();
+}
+
+/**
  * Build model list from process.env or fallback to SDK defaults
  */
 function buildModelList(): Model[] {
   const hasCustomAuth = !!process.env.ANTHROPIC_AUTH_TOKEN;
+  const cliAvailable = isClaudeCLIAvailable();
+
+  // Start with SDK models from environment variables if configured
+  const envModels: Model[] = [];
 
   if (hasCustomAuth) {
-    const envModels: Model[] = [];
     const envEntries: { value: string | undefined; envName: string }[] = [
       { value: process.env.ANTHROPIC_MODEL, envName: 'ANTHROPIC_MODEL' },
       { value: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL, envName: 'ANTHROPIC_DEFAULT_OPUS_MODEL' },
@@ -51,14 +62,22 @@ function buildModelList(): Model[] {
         });
       }
     }
-
-    if (envModels.length > 0) {
-      // Return BOTH CLI and SDK models for dual-section dropdown
-      return [...AVAILABLE_MODELS, ...envModels];
-    }
   }
 
-  return AVAILABLE_MODELS;
+  // Build final model list
+  const models: Model[] = [];
+
+  // Only add CLI models if Claude CLI binary is available
+  if (cliAvailable) {
+    models.push(...AVAILABLE_MODELS);
+  }
+
+  // Add SDK models if configured
+  if (envModels.length > 0) {
+    models.push(...envModels);
+  }
+
+  return models;
 }
 
 /**
@@ -119,7 +138,23 @@ export async function GET() {
 
     // Derive currentProvider from the model's provider field in the list
     const currentModelDef = models.find(m => m.id === currentModelId);
-    const currentProvider = currentModelDef?.provider || 'claude-cli';
+    let currentProvider = currentModelDef?.provider;
+
+    // If no provider found, determine default based on available models
+    if (!currentProvider) {
+      // Check if CLI models are available
+      const hasCliModels = models.some(m => m.provider === 'claude-cli' || !m.provider);
+      currentProvider = hasCliModels ? 'claude-cli' : 'claude-sdk';
+    }
+
+    // If current model is no longer available (e.g., CLI model but CLI not installed),
+    // fall back to first available model
+    if (!currentModelDef && models.length > 0) {
+      currentModelId = models[0].id;
+      // Update provider to match the fallback model
+      currentProvider = models[0].provider || (isClaudeCLIAvailable() ? 'claude-cli' : 'claude-sdk');
+      source = 'default';
+    }
 
     return NextResponse.json({
       models,
