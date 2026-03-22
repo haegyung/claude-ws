@@ -2,14 +2,14 @@ module.exports = {
   apps: [
     {
       name: 'claudews',
-      script: 'pnpm',
-      args: 'run dev',
-      interpreter: '/home/roxane/.nvm/versions/node/v22.16.0/bin/node',
+      script: '/bin/bash',
+      args: '-lc \'if [ ! -f .next/BUILD_ID ]; then echo "[PM2] Missing .next build, running pnpm build..."; pnpm build; fi; pnpm start\'',
+      interpreter: 'none',
       autorestart: true,
       watch: false,
       max_memory_restart: '1G',
       env: {
-        NODE_ENV: 'development',
+        NODE_ENV: 'production',
         PATH: '/home/roxane/.nvm/versions/node/v22.16.0/bin:/usr/local/bin:/usr/bin:/bin'
       },
       env_production: {

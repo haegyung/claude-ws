@@ -24,6 +24,23 @@ import { wireProviderEvents, type EventWiringContext } from './agent-event-wirin
 import { PersistentQuestionStore, type PersistentQuestionData } from './agent-persistent-question-store';
 
 const log = createLogger('AgentManager');
+const FALLBACK_MODEL_ID = 'glm-4.6';
+
+function resolveDefaultModelFromEnv(): string {
+  const envCandidates = [
+    process.env.ANTHROPIC_MODEL,
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+  ];
+
+  for (const candidate of envCandidates) {
+    const value = candidate?.trim();
+    if (value) return value;
+  }
+
+  return FALLBACK_MODEL_ID;
+}
 
 interface AgentInstance {
   attemptId: string;
@@ -117,7 +134,7 @@ class AgentManager extends EventEmitter {
     }
 
     // Build model identity for system prompt
-    const effectiveModel = model || 'claude-opus-4-6';
+    const effectiveModel = model?.trim() || resolveDefaultModelFromEnv();
     const modelDisplayName = modelIdToDisplayName(effectiveModel);
     const modelIdentity = modelDisplayName !== effectiveModel
       ? `You are powered by the model named ${modelDisplayName}. The exact model ID is ${effectiveModel}.`

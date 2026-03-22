@@ -16,7 +16,7 @@ skills/
 tmp/
 # testing
 /coverage
-
+.agents/
 # local data (database, projects)
 /data
 

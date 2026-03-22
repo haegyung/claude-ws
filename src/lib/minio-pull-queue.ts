@@ -32,6 +32,7 @@ interface QueueFileCandidate {
   size: number;
   lastModified: string;
   eTag: string;
+  sourceKey?: string;
 }
 
 interface QueueCounts {
@@ -50,6 +51,7 @@ const DOWNLOAD_TIMEOUT_MS = 20_000;
 const DOWNLOAD_MAX_RETRIES = 3;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 700;
 const MB = 1024 * 1024;
+const PROTECTED_MAIN_DIRS = new Set(['.claude', 'temp', 'tmp', 'node_modules', '.git', 'markdown']);
 
 function buildFingerprint(entry: Pick<ManifestEntry, 'size' | 'lastModified' | 'eTag'>): string {
   const eTag = String(entry.eTag || '').trim();
@@ -107,6 +109,19 @@ function resolveProjectPath(projectPath: string): string {
   if (path.isAbsolute(projectPath)) return projectPath;
   const userCwd = process.env.CLAUDE_WS_USER_CWD || process.cwd();
   return path.resolve(userCwd, projectPath);
+}
+
+function normalizeRelativePath(relativePath: string): string {
+  return relativePath.split(path.sep).join('/');
+}
+
+function isProtectedMainRelativePath(relativePath: string): boolean {
+  const normalized = normalizeRelativePath(relativePath).replace(/^\/+/, '');
+  return [...PROTECTED_MAIN_DIRS].some((name) => normalized === name || normalized.startsWith(`${name}/`));
+}
+
+function buildLocalFingerprint(size: number, lastModifiedMs: number): string {
+  return `${size}:${Math.floor(lastModifiedMs)}`;
 }
 
 function getPullQueueDbPath(projectPath: string): string {
@@ -264,7 +279,73 @@ async function fetchManifest(apiHookUrl: string, folder: string, label: string):
   return json.data as ManifestEntry[];
 }
 
-async function fetchQueueCandidates(apiHookUrl: string, projectId: string): Promise<QueueFileCandidate[]> {
+async function scanLocalFolderCandidates(
+  projectPath: string,
+  projectId: string,
+  folder: 'main' | 'markdown'
+): Promise<QueueFileCandidate[]> {
+  const root = resolveProjectPath(projectPath);
+  const baseDir = folder === 'main' ? root : path.join(root, 'markdown');
+  const keyPrefix = folder === 'main' ? `${projectId}/` : `markdown/${projectId}/`;
+  const candidates: QueueFileCandidate[] = [];
+
+  const walk = async (currentPath: string) => {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const absolutePath = path.join(currentPath, entry.name);
+      const relativePath = normalizeRelativePath(path.relative(baseDir, absolutePath));
+
+      if (folder === 'main' && entry.isDirectory() && isProtectedMainRelativePath(relativePath)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      if (folder === 'main' && isProtectedMainRelativePath(relativePath)) {
+        continue;
+      }
+
+      if (!relativePath || relativePath.startsWith('../')) {
+        continue;
+      }
+
+      const stats = await fs.stat(absolutePath);
+      candidates.push({
+        key: `${keyPrefix}${relativePath}`,
+        folder,
+        fingerprint: `delete-local:${buildLocalFingerprint(stats.size, stats.mtimeMs)}`,
+        size: stats.size,
+        lastModified: new Date(stats.mtimeMs).toISOString(),
+        eTag: '',
+      });
+    }
+  };
+
+  try {
+    await walk(baseDir);
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  return candidates;
+}
+
+async function fetchQueueCandidates(
+  apiHookUrl: string,
+  projectPath: string,
+  projectId: string,
+  sqlite: Database.Database
+): Promise<QueueFileCandidate[]> {
   const targetPrefix = projectId;
   const markdownPrefix = `markdown/${projectId}`;
 
@@ -284,7 +365,47 @@ async function fetchQueueCandidates(apiHookUrl: string, projectId: string): Prom
     }))
   );
 
-  return [...normalize(mainManifest, 'main'), ...normalize(markdownManifest, 'markdown')];
+  const remoteCandidates = [...normalize(mainManifest, 'main'), ...normalize(markdownManifest, 'markdown')];
+  const [localMain, localMarkdown] = await Promise.all([
+    scanLocalFolderCandidates(projectPath, projectId, 'main'),
+    scanLocalFolderCandidates(projectPath, projectId, 'markdown'),
+  ]);
+  const localKeySet = new Set([...localMain, ...localMarkdown].map((candidate) => candidate.key));
+  const remoteKeys = new Set(remoteCandidates.map((candidate) => candidate.key));
+  const staleLocalCandidates = [...localMain, ...localMarkdown].filter((candidate) => !remoteKeys.has(candidate.key));
+  const staleByKey = new Map(staleLocalCandidates.map((candidate) => [candidate.key, candidate]));
+  const readDoneStateStmt = sqlite.prepare(`
+    SELECT fingerprint
+    FROM file_sync_state
+    WHERE file_key = ? AND status = 'done'
+  `);
+  const staleByFingerprint = new Map<string, string[]>();
+  for (const staleCandidate of staleLocalCandidates) {
+    const row = readDoneStateStmt.get(staleCandidate.key) as { fingerprint?: string } | undefined;
+    const knownFingerprint = row?.fingerprint?.trim();
+    if (!knownFingerprint) continue;
+
+    const bucketKey = `${staleCandidate.folder}:${knownFingerprint}`;
+    const bucket = staleByFingerprint.get(bucketKey) ?? [];
+    bucket.push(staleCandidate.key);
+    staleByFingerprint.set(bucketKey, bucket);
+  }
+
+  for (const remoteCandidate of remoteCandidates) {
+    if (localKeySet.has(remoteCandidate.key)) continue;
+
+    const bucketKey = `${remoteCandidate.folder}:${remoteCandidate.fingerprint}`;
+    const bucket = staleByFingerprint.get(bucketKey);
+    if (!bucket || bucket.length === 0) continue;
+
+    const sourceKey = bucket.shift();
+    if (!sourceKey) continue;
+
+    remoteCandidate.sourceKey = sourceKey;
+    staleByKey.delete(sourceKey);
+  }
+
+  return [...remoteCandidates, ...staleByKey.values()];
 }
 
 function enqueueInDb(
@@ -381,10 +502,10 @@ function enqueueInDb(
 
 export async function enqueueProjectPullSync(projectPath: string, fallbackProjectId: string) {
   const hookEnv = await readHookEnv(projectPath, fallbackProjectId);
-  const candidates = await fetchQueueCandidates(hookEnv.apiHookUrl, hookEnv.projectId);
   const sqlite = await ensurePullQueueDb(projectPath);
 
   try {
+    const candidates = await fetchQueueCandidates(hookEnv.apiHookUrl, projectPath, hookEnv.projectId, sqlite);
     const { jobId, counts } = enqueueInDb(sqlite, hookEnv.projectId, candidates);
     return {
       jobId,
@@ -457,6 +578,81 @@ async function downloadFile(url: string, destination: string) {
   }
 
   throw new Error(`Download failed after ${DOWNLOAD_MAX_RETRIES} attempts: ${lastError?.message || 'Unknown error'}`);
+}
+
+async function deleteLocalFileByKey(
+  projectPath: string,
+  fileKey: string,
+  projectId: string,
+  folder: 'main' | 'markdown'
+): Promise<void> {
+  const projectRoot = resolveProjectPath(projectPath);
+  const destination = getLocalPath(projectPath, fileKey, projectId, folder);
+  const resolvedDestination = path.resolve(destination);
+  if (resolvedDestination !== projectRoot && !resolvedDestination.startsWith(`${projectRoot}${path.sep}`)) {
+    throw new Error(`Refusing to delete path outside project: ${resolvedDestination}`);
+  }
+
+  if (folder === 'main') {
+    const mainPrefix = `${projectId}/`;
+    const relativePath = fileKey.startsWith(mainPrefix) ? fileKey.slice(mainPrefix.length) : fileKey;
+    if (isProtectedMainRelativePath(relativePath)) {
+      return;
+    }
+  }
+
+  await fs.unlink(resolvedDestination).catch((error: any) => {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  });
+}
+
+async function moveLocalFileByKey(
+  projectPath: string,
+  sourceKey: string,
+  targetKey: string,
+  projectId: string,
+  folder: 'main' | 'markdown'
+): Promise<boolean> {
+  const projectRoot = resolveProjectPath(projectPath);
+  const sourcePath = path.resolve(getLocalPath(projectPath, sourceKey, projectId, folder));
+  const targetPath = path.resolve(getLocalPath(projectPath, targetKey, projectId, folder));
+
+  if (sourcePath !== projectRoot && !sourcePath.startsWith(`${projectRoot}${path.sep}`)) {
+    throw new Error(`Refusing to move source outside project: ${sourcePath}`);
+  }
+  if (targetPath !== projectRoot && !targetPath.startsWith(`${projectRoot}${path.sep}`)) {
+    throw new Error(`Refusing to move target outside project: ${targetPath}`);
+  }
+
+  if (folder === 'main') {
+    const mainPrefix = `${projectId}/`;
+    const sourceRelative = sourceKey.startsWith(mainPrefix) ? sourceKey.slice(mainPrefix.length) : sourceKey;
+    const targetRelative = targetKey.startsWith(mainPrefix) ? targetKey.slice(mainPrefix.length) : targetKey;
+    if (isProtectedMainRelativePath(sourceRelative) || isProtectedMainRelativePath(targetRelative)) {
+      return false;
+    }
+  }
+
+  const sourceExists = await fs.access(sourcePath).then(() => true).catch(() => false);
+  if (!sourceExists) return false;
+
+  const targetExists = await fs.access(targetPath).then(() => true).catch(() => false);
+  if (targetExists) return false;
+
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  try {
+    await fs.rename(sourcePath, targetPath);
+  } catch (error: any) {
+    if (error?.code !== 'EXDEV') {
+      throw error;
+    }
+    await fs.copyFile(sourcePath, targetPath);
+    await fs.unlink(sourcePath);
+  }
+
+  return true;
 }
 
 interface PendingJob {
@@ -539,6 +735,13 @@ function upsertFileState(
   `).run(fileKey, folder, status, fingerprint, size, lastModified, eTag, jobId, Date.now());
 }
 
+function removeFileState(sqlite: Database.Database, fileKey: string): void {
+  sqlite.prepare(`
+    DELETE FROM file_sync_state
+    WHERE file_key = ?
+  `).run(fileKey);
+}
+
 function shouldSkipByState(
   sqlite: Database.Database,
   fileKey: string,
@@ -577,7 +780,7 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
     }
 
     const hookEnv = await readHookEnv(projectPath, projectId);
-    const candidates = await fetchQueueCandidates(hookEnv.apiHookUrl, hookEnv.projectId);
+    const candidates = await fetchQueueCandidates(hookEnv.apiHookUrl, projectPath, hookEnv.projectId, sqlite);
     const manifestMap = new Map(candidates.map((entry) => [entry.key, entry]));
 
     const jobFiles = sqlite.prepare(`
@@ -633,6 +836,47 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
         );
 
         try {
+          if (row.fingerprint.startsWith('delete-local:')) {
+            await deleteLocalFileByKey(projectPath, row.fileKey, hookEnv.projectId, row.folder);
+            markJobFileStatus(sqlite, job.id, row.fileKey, 'done', null);
+            upsertFileState(
+              sqlite,
+              row.fileKey,
+              row.folder,
+              'done',
+              row.fingerprint,
+              candidate.size,
+              candidate.lastModified,
+              candidate.eTag,
+              job.id
+            );
+            return;
+          }
+
+          if (candidate.sourceKey) {
+            const moved = await moveLocalFileByKey(projectPath, candidate.sourceKey, row.fileKey, hookEnv.projectId, row.folder);
+            if (moved) {
+              const remoteDate = new Date(candidate.lastModified);
+              const movedPath = getLocalPath(projectPath, row.fileKey, hookEnv.projectId, row.folder);
+              await fs.utimes(movedPath, remoteDate, remoteDate).catch(() => undefined);
+
+              markJobFileStatus(sqlite, job.id, row.fileKey, 'done', null);
+              removeFileState(sqlite, candidate.sourceKey);
+              upsertFileState(
+                sqlite,
+                row.fileKey,
+                row.folder,
+                'done',
+                candidate.fingerprint,
+                candidate.size,
+                candidate.lastModified,
+                candidate.eTag,
+                job.id
+              );
+              return;
+            }
+          }
+
           const manifestEntry = await fetchManifest(
             hookEnv.apiHookUrl,
             row.folder === 'main' ? hookEnv.projectId : `markdown/${hookEnv.projectId}`,

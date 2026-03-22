@@ -44,6 +44,41 @@ UPDATED=0
 SKIPPED=0
 FAILED=0
 
+# Extract project ID from hook env or legacy hook content
+extract_project_id() {
+    local pull_file="$1"
+    local project_dir="$2"
+    local env_file="$project_dir/.env"
+
+    # 1) Prefer .env PROJECT_ID (most reliable)
+    if [ -f "$env_file" ]; then
+        local env_id
+        env_id=$(grep -oP '^\s*PROJECT_ID\s*=\s*"?\K[^"]+' "$env_file" 2>/dev/null || true)
+        if [ -n "$env_id" ]; then
+            echo "$env_id"
+            return 0
+        fi
+    fi
+
+    # 2) Legacy pull hook pattern
+    local legacy_id
+    legacy_id=$(grep -oP 'targetPrefix:\s*"\K[^"]+' "$pull_file" 2>/dev/null || true)
+    if [ -n "$legacy_id" ]; then
+        echo "$legacy_id"
+        return 0
+    fi
+
+    # 3) Fallback to PROJECT_ID in hook source
+    local source_id
+    source_id=$(grep -oP 'PROJECT_ID[^\n]*\|\|\s*"\K[^"]+' "$pull_file" 2>/dev/null || true)
+    if [ -n "$source_id" ]; then
+        echo "$source_id"
+        return 0
+    fi
+
+    return 1
+}
+
 # Process each project
 for PULL_FILE in "${PULL_FILES[@]}"; do
     PROJECT_DIR="$(dirname "$PULL_FILE")"
@@ -64,8 +99,8 @@ for PULL_FILE in "${PULL_FILES[@]}"; do
         cp "$PUSH_FILE" "$BACKUP_PROJECT_DIR/minio-push-sync.ts.bak" 2>/dev/null
     fi
 
-    # Extract project ID from existing pull sync
-    PROJECT_ID=$(grep -oP 'targetPrefix: "\K[^"]+' "$PULL_FILE" 2>/dev/null || echo "")
+    # Extract project ID from .env first, then fallback patterns
+    PROJECT_ID=$(extract_project_id "$PULL_FILE" "$PROJECT_DIR" || echo "")
 
     if [ -z "$PROJECT_ID" ]; then
         echo "  ⚠️  Could not extract project ID, skipping..." | tee -a "$LOG_FILE"

@@ -49,6 +49,7 @@ import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
 import { getMinioPullQueueWorker } from './src/lib/minio-pull-queue';
+import { getMinioPushQueueWorker } from './src/lib/minio-push-queue';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
@@ -59,6 +60,7 @@ const port = getPort();
 const app = next({ dev, hostname, port, turbopack: false });
 const handle = app.getRequestHandler();
 const minioPullQueueWorker = getMinioPullQueueWorker();
+const minioPushQueueWorker = getMinioPushQueueWorker();
 
 app.prepare().then(async () => {
   const httpServer = createServer((req, res) => {
@@ -1663,8 +1665,9 @@ app.prepare().then(async () => {
   httpServer.listen(port, () => {
     log.info(`> Ready on http://${hostname}:${port}`);
 
-    // Start MinIO pull queue worker with server lifecycle
+    // Start MinIO sync queue workers with server lifecycle
     minioPullQueueWorker.start();
+    minioPushQueueWorker.start();
 
     // Try to auto-reconnect tunnel after server is ready
     tunnelService.tryAutoReconnect().catch((err) => {
@@ -1685,9 +1688,12 @@ app.prepare().then(async () => {
     await tunnelService.stop();
     log.info('> Tunnel stopped');
 
-    // Stop MinIO pull queue worker
+    // Stop MinIO sync queue workers
     minioPullQueueWorker.stop();
     log.info('> MinIO pull queue worker stopped');
+
+    minioPushQueueWorker.stop();
+    log.info('> MinIO push queue worker stopped');
 
     // Cancel all Claude agents first
     agentManager.cancelAll();
