@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
   // Enable gzip compression for responses
   compress: true,
   // Transpile xterm packages for proper CSS/ESM handling
-  transpilePackages: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links'],
+  transpilePackages: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@pierre/diffs'],
   outputFileTracingRoot: path.join(__dirname),
   outputFileTracingIncludes: {
     '/': ['./src/**/*'],
