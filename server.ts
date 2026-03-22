@@ -1828,6 +1828,10 @@ app.prepare().then(async () => {
   httpServer.listen(port, () => {
     log.info(`> Ready on http://${hostname}:${port}`);
 
+    if (!process.env.NEXT_PUBLIC_URL) {
+      log.warn('[Server] NEXT_PUBLIC_URL is not set. Access is limited to localhost only. Set NEXT_PUBLIC_URL in .env to enable remote access.');
+    }
+
     // Try to auto-reconnect tunnel after server is ready
     tunnelService.tryAutoReconnect().catch((err) => {
       log.error({ err }, '[Server] Failed to auto-reconnect tunnel');
