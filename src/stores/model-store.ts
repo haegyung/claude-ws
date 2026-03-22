@@ -31,7 +31,7 @@ interface ModelStore {
 
 export const useModelStore = create<ModelStore>((set, get) => ({
   defaultModel: DEFAULT_MODEL_ID,
-  defaultProvider: 'claude-cli',
+  defaultProvider: 'claude-cli', // Will be updated after loading models based on availability
   lastUsedModel: typeof window !== 'undefined' ? localStorage.getItem(LAST_USED_MODEL_KEY) : null,
   lastUsedProvider: typeof window !== 'undefined' ? localStorage.getItem(LAST_USED_PROVIDER_KEY) : null,
   taskModels: {},
@@ -55,10 +55,16 @@ export const useModelStore = create<ModelStore>((set, get) => ({
       }
 
       const data = await response.json();
+
+      // Determine default provider based on available models
+      // If CLI models exist, default to claude-cli, otherwise claude-sdk
+      const hasCliModels = data.models?.some((m: Model) => m.provider === 'claude-cli' || !m.provider);
+      const defaultProvider = data.currentProvider || (hasCliModels ? 'claude-cli' : 'claude-sdk');
+
       set({
         availableModels: data.models,
         defaultModel: data.current,
-        defaultProvider: data.currentProvider || 'claude-cli',
+        defaultProvider,
         source: data.source,
         isLoading: false,
       });
@@ -72,7 +78,14 @@ export const useModelStore = create<ModelStore>((set, get) => ({
   setModel: async (modelId: string, taskId?: string) => {
     const { taskModels, taskProviders, availableModels } = get();
     const model = availableModels.find(m => m.id === modelId);
-    const provider = model?.provider || 'claude-cli';
+
+    // Determine provider from model, or infer from available models
+    let provider = model?.provider;
+    if (!provider && availableModels.length > 0) {
+      const hasCliModels = availableModels.some(m => m.provider === 'claude-cli' || !m.provider);
+      provider = hasCliModels ? 'claude-cli' : 'claude-sdk';
+    }
+    provider = provider || 'claude-sdk';
 
     // Always persist as last-used model for new task creation
     try {
@@ -162,8 +175,18 @@ export const useModelStore = create<ModelStore>((set, get) => ({
 
   // Get provider for a specific task
   getTaskProvider: (taskId: string, taskLastProvider?: string | null) => {
-    const { taskProviders, defaultProvider, lastUsedProvider } = get();
-    return taskProviders[taskId] || taskLastProvider || lastUsedProvider || defaultProvider || 'claude-cli';
+    const { taskProviders, defaultProvider, lastUsedProvider, availableModels } = get();
+
+    // Determine provider from various sources with proper fallback
+    let provider = taskProviders[taskId] || taskLastProvider || lastUsedProvider || defaultProvider;
+
+    // If still no provider, infer from available models
+    if (!provider && availableModels.length > 0) {
+      const hasCliModels = availableModels.some(m => m.provider === 'claude-cli' || !m.provider);
+      provider = hasCliModels ? 'claude-cli' : 'claude-sdk';
+    }
+
+    return provider || 'claude-sdk';
   },
 
   getShortName: (taskId?: string, taskLastModel?: string | null) => {

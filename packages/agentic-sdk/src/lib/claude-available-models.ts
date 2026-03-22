@@ -55,7 +55,7 @@ export function isValidModelId(id: string): boolean {
  * Convert model ID to human-readable display name dynamically.
  * Examples:
  *   claude-opus-4-5-20251101  -> Claude Opus 4.5
- *   my-custom-model-1-0       -> My Custom Model 1.0
+ *   my-custom-model-1-0       -> My Custom Models 1.0
  */
 export function modelIdToDisplayName(id: string): string {
   const known = getModelById(id);

@@ -41,10 +41,10 @@ export function ChatModelSelector({ disabled = false, taskId, taskLastModel, tas
   };
 
   // Split models by provider for two-section dropdown
-  const { cliModels, sdkModels } = useMemo(() => {
+  const { cliModels, sdkModels, hasCliModels } = useMemo(() => {
     const cliModels = availableModels.filter(m => m.provider === 'claude-cli' || !m.provider);
     const sdkModels = availableModels.filter(m => m.provider === 'claude-sdk');
-    return { cliModels, sdkModels };
+    return { cliModels, sdkModels, hasCliModels: cliModels.length > 0 };
   }, [availableModels]);
 
   const renderModelItem = (model: typeof availableModels[number]) => (
@@ -100,17 +100,20 @@ export function ChatModelSelector({ disabled = false, taskId, taskLastModel, tas
         className="w-64 z-[9999]"
         sideOffset={8}
       >
-        {/* Section 1: Claude Code CLI */}
-        <DropdownMenuLabel className="text-xs text-muted-foreground">
-          Claude Code CLI
-        </DropdownMenuLabel>
-        {cliModels.map(renderModelItem)}
+        {/* Section 1: Claude Code CLI - only show if CLI models are available */}
+        {hasCliModels && (
+          <>
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              Claude Code CLI
+            </DropdownMenuLabel>
+            {cliModels.map(renderModelItem)}
+            <DropdownMenuSeparator />
+          </>
+        )}
 
-        <DropdownMenuSeparator />
-
-        {/* Section 2: Custom Model */}
+        {/* Section 2: Custom Models */}
         <DropdownMenuLabel className="text-xs text-muted-foreground">
-          Custom Model
+          Custom Models
         </DropdownMenuLabel>
         {sdkModels.length > 0 ? (
           sdkModels.map(renderModelItem)
