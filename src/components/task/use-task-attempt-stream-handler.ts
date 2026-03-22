@@ -53,6 +53,7 @@ export function useTaskAttemptStreamHandler(
   // Defer "In Review" move until isRunning is actually false (the source of truth)
   const pendingReviewTaskRef = useRef<string | null>(null);
   const isRunningRef = useRef(false);
+  const isAutopilotActiveRef = useRef(false);
 
   // Check if autopilot is active — if so, autopilot owns the "in_review" transition
   const currentProjectId = activeProjectId || selectedProjectIds[0];
@@ -79,18 +80,21 @@ export function useTaskAttemptStreamHandler(
   const stream = useAttemptStream({ taskId, onComplete: handleTaskComplete });
   const { startAttempt, interruptAndSend, isRunning, isConnected } = stream;
 
-  // Keep isRunningRef in sync so the callback always reads the latest value
+  // Keep refs in sync so callbacks/effects always read the latest values
   isRunningRef.current = isRunning;
+  isAutopilotActiveRef.current = isAutopilotActive;
 
   // When isRunning transitions to false, flush any deferred "In Review" move
+  // Note: isAutopilotActive read from ref — handleTaskComplete already skips setting
+  // pendingReviewTaskRef when autopilot is active, so deps-based re-trigger is unnecessary.
   useEffect(() => {
-    if (!isRunning && pendingReviewTaskRef.current && !isAutopilotActive) {
+    if (!isRunning && pendingReviewTaskRef.current && !isAutopilotActiveRef.current) {
       const taskToReview = pendingReviewTaskRef.current;
       pendingReviewTaskRef.current = null;
       updateTaskStatus(taskToReview, 'in_review');
       toast.success(t('taskCompleted'), { description: t('movedToReview') });
     }
-  }, [isRunning, updateTaskStatus, t, isAutopilotActive]);
+  }, [isRunning, updateTaskStatus, t]);
 
   // Auto-start when pendingAutoStartTask matches this task
   useEffect(() => {
