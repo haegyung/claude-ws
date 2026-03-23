@@ -32,6 +32,7 @@ module.exports = {
       // Environment - merge .env file with production settings
       env: {
         NODE_ENV: 'production',
+        CLAUDE_PROVIDER: 'sdk',
         ...envConfig,
       },
 
