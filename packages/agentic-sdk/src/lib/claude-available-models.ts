@@ -53,13 +53,18 @@ export function isValidModelId(id: string): boolean {
 
 /**
  * Convert model ID to human-readable display name dynamically.
+ * Only transforms known Claude model IDs (claude-* prefix).
+ * Non-Claude models are returned as-is to avoid mangling custom model names.
  * Examples:
  *   claude-opus-4-5-20251101  -> Claude Opus 4.5
- *   my-custom-model-1-0       -> My Custom Models 1.0
+ *   my-custom-model-1-0       -> My Custom Model 1.0
  */
 export function modelIdToDisplayName(id: string): string {
   const known = getModelById(id);
   if (known) return known.name;
+
+  // Only transform claude-* model IDs; return others as-is
+  if (!id.startsWith('claude-')) return id;
 
   // Remove date suffix patterns like -20251101
   const withoutDate = id.replace(/-\d{8}$/, '');
