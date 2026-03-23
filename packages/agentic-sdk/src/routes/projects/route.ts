@@ -12,8 +12,8 @@ export default async function projectsRoute(fastify: FastifyInstance) {
 
   fastify.post('/api/projects', async (request, reply) => {
     try {
-      const { name, path: projectPath } = request.body as any;
-      const project = await fastify.services.project.createProject({ name, path: projectPath });
+      const { id, projectId, name, path: projectPath } = request.body as any;
+      const project = await fastify.services.project.createProject({ id: projectId || id, name, path: projectPath });
       return reply.code(201).send(project);
     } catch (error: any) {
       if (error instanceof ProjectValidationError) {

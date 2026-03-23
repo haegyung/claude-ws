@@ -11,6 +11,8 @@ export interface ExtractedItem {
   sourcePath: string;
   targetPath: string;
   name: string;
+  // Relative path under skills/commands/agents root. Used to preserve command namespaces.
+  relativePath?: string;
   componentCount?: number;
 }
 
@@ -71,9 +73,10 @@ export async function moveDirectory(source: string, target: string): Promise<voi
 
 export async function moveDirectoryContents(
   sourceDir: string,
-  targetDir: string,
+  targetBaseDir: string,
   items: ExtractedItem[],
-  type: 'skill' | 'command' | 'agent'
+  type: 'skill' | 'command' | 'agent',
+  relativePrefix = ''
 ): Promise<void> {
   const entries = await readdir(sourceDir, { withFileTypes: true });
 
@@ -81,15 +84,57 @@ export async function moveDirectoryContents(
     if (entry.name.startsWith('.')) continue;
 
     const sourcePath = join(sourceDir, entry.name);
-    const targetPath = join(targetDir, entry.name);
+    const relPath = relativePrefix ? join(relativePrefix, entry.name) : entry.name;
 
-    if (entry.isDirectory()) {
-      await moveDirectory(sourcePath, targetPath);
-      items.push({ type, sourcePath, targetPath, name: entry.name });
-    } else if (entry.isFile()) {
+    if (type === 'skill') {
+      if (!entry.isDirectory()) continue;
+      const skillMdPath = join(sourcePath, 'SKILL.md');
+      if (existsSync(skillMdPath)) {
+        const targetPath = join(targetBaseDir, 'skills', relPath);
+        await moveDirectory(sourcePath, targetPath);
+        items.push({
+          type: 'skill',
+          sourcePath,
+          targetPath: join(targetPath, 'SKILL.md'),
+          name: relPath,
+          relativePath: relPath,
+        });
+      } else {
+        await moveDirectoryContents(sourcePath, targetBaseDir, items, type, relPath);
+      }
+      continue;
+    }
+
+    if (type === 'command') {
+      if (entry.isDirectory()) {
+        await moveDirectoryContents(sourcePath, targetBaseDir, items, type, relPath);
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        const targetPath = join(targetBaseDir, 'commands', relPath);
+        await mkdir(dirname(targetPath), { recursive: true });
+        await copyFile(sourcePath, targetPath);
+        items.push({
+          type: 'command',
+          sourcePath,
+          targetPath,
+          name: relPath.replace(/\.md$/i, '').split('/').join(':'),
+          relativePath: relPath,
+        });
+      }
+      continue;
+    }
+
+    // Agents: only allow markdown files directly under agents/ (no subdirectories)
+    if (!relativePrefix && entry.isFile() && entry.name.endsWith('.md')) {
+      const targetPath = join(targetBaseDir, 'agents', entry.name);
       await mkdir(dirname(targetPath), { recursive: true });
       await copyFile(sourcePath, targetPath);
-      items.push({ type, sourcePath, targetPath, name: entry.name });
+      items.push({
+        type: 'agent',
+        sourcePath,
+        targetPath,
+        name: basename(entry.name, '.md'),
+        relativePath: entry.name,
+      });
     }
   }
 }
@@ -173,9 +218,10 @@ export async function previewDirectory(
 
 export async function previewDirectoryContents(
   sourceDir: string,
-  targetDir: string,
+  targetBaseDir: string,
   items: ExtractedItem[],
-  type: 'skill' | 'command' | 'agent'
+  type: 'skill' | 'command' | 'agent',
+  relativePrefix = ''
 ): Promise<void> {
   const entries = await readdir(sourceDir, { withFileTypes: true });
 
@@ -183,12 +229,49 @@ export async function previewDirectoryContents(
     if (entry.name.startsWith('.')) continue;
 
     const sourcePath = join(sourceDir, entry.name);
-    const targetPath = join(targetDir, entry.name);
+    const relPath = relativePrefix ? join(relativePrefix, entry.name) : entry.name;
 
-    if (entry.isDirectory()) {
-      items.push({ type, sourcePath, targetPath, name: entry.name });
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      items.push({ type, sourcePath, targetPath, name: entry.name });
+    if (type === 'skill') {
+      if (!entry.isDirectory()) continue;
+      const skillMdPath = join(sourcePath, 'SKILL.md');
+      if (existsSync(skillMdPath)) {
+        items.push({
+          type: 'skill',
+          sourcePath,
+          targetPath: join(targetBaseDir, 'skills', relPath, 'SKILL.md'),
+          name: relPath,
+          relativePath: relPath,
+        });
+      } else {
+        await previewDirectoryContents(sourcePath, targetBaseDir, items, type, relPath);
+      }
+      continue;
+    }
+
+    if (type === 'command') {
+      if (entry.isDirectory()) {
+        await previewDirectoryContents(sourcePath, targetBaseDir, items, type, relPath);
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        items.push({
+          type: 'command',
+          sourcePath,
+          targetPath: join(targetBaseDir, 'commands', relPath),
+          name: relPath.replace(/\.md$/i, '').split('/').join(':'),
+          relativePath: relPath,
+        });
+      }
+      continue;
+    }
+
+    // Agents: only allow markdown files directly under agents/ (no subdirectories)
+    if (!relativePrefix && entry.isFile() && entry.name.endsWith('.md')) {
+      items.push({
+        type: 'agent',
+        sourcePath,
+        targetPath: join(targetBaseDir, 'agents', entry.name),
+        name: basename(entry.name, '.md'),
+        relativePath: entry.name,
+      });
     }
   }
 }

@@ -13,7 +13,14 @@ const nextConfig: NextConfig = {
   // Enable gzip compression for responses
   compress: true,
   // Transpile xterm packages for proper CSS/ESM handling
-  transpilePackages: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@pierre/diffs'],
+  transpilePackages: [
+    '@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@pierre/diffs',
+    // Force Turbopack to compile these as a single bundle to avoid
+    // "module factory not available" HMR errors with shared @lezer/common
+    '@codemirror/state', '@codemirror/view', '@codemirror/language',
+    '@lezer/common', '@lezer/highlight', '@lezer/lr',
+    '@uiw/react-codemirror',
+  ],
   outputFileTracingRoot: path.join(__dirname),
   outputFileTracingIncludes: {
     '/': ['./src/**/*'],

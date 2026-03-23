@@ -167,7 +167,7 @@ export function ProjectSelectorContent({ onAddProject }: ProjectSelectorProps) {
           <DialogHeader>
             <DialogTitle>Delete Project?</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <strong>{projectToDeleteName}</strong>? This will remove it from your list but won't delete the project folder.
+              Are you sure you want to delete <strong>{projectToDeleteName}</strong>? This will remove it from your list but won&apos;t delete the project folder.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

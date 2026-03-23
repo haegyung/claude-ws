@@ -66,6 +66,9 @@
     "pnpm": ">=9.0.0"
   },
   "pnpm": {
+    "overrides": {
+      "axios": "0.30.3"
+    },
     "onlyBuiltDependencies": [
       "@parcel/watcher",
       "@swc/core",
@@ -81,6 +84,11 @@
   "scripts": {
     "postinstall": "node scripts/postinstall-optional-native-deps.js",
     "dev": "cross-env CLAUDECODE= tsx server.ts",
+    "pm2": "pm2 start ecosystem.config.js && pm2 save",
+    "pm2-restart": "pm2 restart claudews",
+    "pm2-stop": "pm2 stop claudews",
+    "pm2-logs": "pm2 logs claudews",
+    "pm2-monit": "pm2 monit",
     "build": "cross-env NODE_ENV=production next build",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "db:generate": "drizzle-kit generate",
@@ -119,6 +127,7 @@
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-separator": "^1.1.8",
@@ -152,7 +161,6 @@
     "diff": "^8.0.3",
     "dompurify": "^3.3.3",
     "dotenv": "^17.3.1",
-    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.1",
@@ -193,6 +201,7 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.31.10",
     "@types/js-yaml": "^4.0.9"
   }
 }

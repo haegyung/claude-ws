@@ -37,7 +37,12 @@ export async function analyzeForPreview(extractDir: string, agentFactoryDir: str
 
     if (entry.isDirectory()) {
       if (entry.name === 'skills' || entry.name === 'commands' || entry.name === 'agents') {
-        await previewDirectoryContents(entryPath, agentFactoryDir, items, entry.name as 'skill' | 'command' | 'agent');
+        const componentType = entry.name === 'skills'
+          ? 'skill'
+          : entry.name === 'commands'
+            ? 'command'
+            : 'agent';
+        await previewDirectoryContents(entryPath, agentFactoryDir, items, componentType);
       } else {
         const subEntries = await readdir(entryPath, { withFileTypes: true });
         const hasSubdirs = subEntries.some(e =>
@@ -110,8 +115,12 @@ export async function analyzeAndOrganize(extractDir: string, agentFactoryDir: st
 
     if (entry.isDirectory()) {
       if (entry.name === 'skills' || entry.name === 'commands' || entry.name === 'agents') {
-        const targetDir = join(agentFactoryDir, entry.name);
-        await moveDirectoryContents(entryPath, targetDir, items, entry.name as 'skill' | 'command' | 'agent');
+        const componentType = entry.name === 'skills'
+          ? 'skill'
+          : entry.name === 'commands'
+            ? 'command'
+            : 'agent';
+        await moveDirectoryContents(entryPath, agentFactoryDir, items, componentType);
       } else {
         const subEntries = await readdir(entryPath, { withFileTypes: true });
         const hasSubdirs = subEntries.some(e =>
@@ -165,11 +174,11 @@ export async function importFromSession(
     if (item.type === 'agent_set') {
       targetPath = join(targetBaseDir, 'agent-sets', item.name);
     } else if (item.type === 'skill') {
-      targetPath = join(targetBaseDir, 'skills', item.name, 'SKILL.md');
+      targetPath = join(targetBaseDir, 'skills', item.relativePath || item.name, 'SKILL.md');
     } else if (item.type === 'agent') {
-      targetPath = join(targetBaseDir, 'agents', `${item.name}.md`);
+      targetPath = join(targetBaseDir, 'agents', item.relativePath || `${item.name}.md`);
     } else {
-      targetPath = join(targetBaseDir, 'commands', `${item.name}.md`);
+      targetPath = join(targetBaseDir, 'commands', item.relativePath || `${item.name}.md`);
     }
 
     if (item.type === 'agent_set') {
@@ -207,7 +216,11 @@ export async function importFromSession(
           description = extractDescriptionFromMarkdown(content);
         } catch { /* ignore */ }
 
-        const componentType = item.type === 'unknown' ? 'command' : item.type;
+        const componentType = item.type === 'skill'
+          ? 'skill'
+          : item.type === 'agent'
+            ? 'agent'
+            : 'command';
         await registryService.upsertPlugin(item.name, componentType, {
           description,
           sourcePath: targetPath,

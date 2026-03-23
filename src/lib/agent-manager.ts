@@ -26,7 +26,7 @@ import { wireProviderEvents, type EventWiringContext } from './agent-event-wirin
 import { PersistentQuestionStore, type PersistentQuestionData } from './agent-persistent-question-store';
 
 const log = createLogger('AgentManager');
-const FALLBACK_MODEL_ID = 'claude-opus-4-6';
+const FALLBACK_MODEL_ID = 'glm-4.6';
 
 function resolveDefaultModelFromEnv(): string {
   const envCandidates = [

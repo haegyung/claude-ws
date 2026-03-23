@@ -52,6 +52,8 @@ import { usageTracker } from './src/lib/usage-tracker';
 import { workflowTracker } from './src/lib/workflow-tracker';
 import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
+import { getMinioPullQueueWorker } from './src/lib/minio-pull-queue';
+import { getMinioPushQueueWorker } from './src/lib/minio-push-queue';
 import { createAutopilotManager, appendQuestionAnswer, appendSubagentEnded, appendTrackedTaskUpdate } from './src/lib/autopilot';
 import type { AutopilotMode } from './src/lib/autopilot';
 
@@ -63,6 +65,8 @@ const port = getPort();
 
 const app = next({ dev, hostname, port, turbopack: false });
 const handle = app.getRequestHandler();
+const minioPullQueueWorker = getMinioPullQueueWorker();
+const minioPushQueueWorker = getMinioPushQueueWorker();
 
 app.prepare().then(async () => {
   const httpServer = createServer((req, res) => {
@@ -224,14 +228,18 @@ app.prepare().then(async () => {
               const { mkdir } = await import('fs/promises');
               const { join } = await import('path');
 
-              const projectDirName = projectId;
-              const projectPath = projectRootPath
+              const projectDirName = `${projectId}-${projectName}`;
+              log.info({ projectRootPath, userCwd, projectDirName }, '[Socket] Debug project path creation');
+              const projectPath = (projectRootPath && projectRootPath.trim() !== '')
                 ? join(projectRootPath, projectDirName)
                 : join(userCwd, 'data', 'projects', projectDirName);
+              log.info({ projectPath, projectRootPath, userCwd }, '[Socket] Final project path');
 
               try {
+                const { setupProjectDefaults } = await import('./src/lib/project-utils');
                 await mkdir(projectPath, { recursive: true });
-                log.info({ projectPath }, '[Socket] Created project directory');
+                await setupProjectDefaults(projectPath, projectId);
+                log.info({ projectPath, projectId }, '[Socket] Created project directory and defaults');
               } catch (mkdirError: any) {
                 if (mkdirError?.code !== 'EEXIST') {
                   log.error({ mkdirError }, '[Socket] Failed to create project folder');
@@ -615,7 +623,7 @@ app.prepare().then(async () => {
 
             log.warn(`[Server] Auto-retried answer for ${attemptId} as new attempt ${newAttemptId}`);
           } catch (error) {
-            log.error({error},`[Server] Auto-retry failed for ${attemptId}:`);
+            log.error({ error }, `[Server] Auto-retry failed for ${attemptId}:`);
             socket.emit('error', { message: 'Auto-retry failed: ' + (error instanceof Error ? error.message : 'Unknown error') });
           }
         }
@@ -1632,9 +1640,9 @@ app.prepare().then(async () => {
               taskTitle: task?.title || 'Unknown',
               summary: expanded.summary,
             });
-          }).catch(() => {});
+          }).catch(() => { });
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
   });
 
@@ -1828,6 +1836,9 @@ app.prepare().then(async () => {
   httpServer.listen(port, () => {
     log.info(`> Ready on http://${hostname}:${port}`);
 
+    // Start MinIO sync queue workers with server lifecycle
+    minioPullQueueWorker.start();
+    minioPushQueueWorker.start();
     if (!process.env.NEXT_PUBLIC_URL) {
       log.warn('[Server] NEXT_PUBLIC_URL is not set. Access is limited to localhost only. Set NEXT_PUBLIC_URL in .env to enable remote access.');
     }
@@ -1850,6 +1861,13 @@ app.prepare().then(async () => {
     // Stop tunnel
     await tunnelService.stop();
     log.info('> Tunnel stopped');
+
+    // Stop MinIO sync queue workers
+    minioPullQueueWorker.stop();
+    log.info('> MinIO pull queue worker stopped');
+
+    minioPushQueueWorker.stop();
+    log.info('> MinIO push queue worker stopped');
 
     // Cancel all Claude agents first
     agentManager.cancelAll();

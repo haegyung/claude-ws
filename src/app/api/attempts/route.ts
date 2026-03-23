@@ -7,6 +7,7 @@ import { createForceCreateService } from '@agentic-sdk/services/force-create-pro
 import { createProjectService } from '@agentic-sdk/services/project/project-crud';
 import { createTaskService } from '@agentic-sdk/services/task/task-crud-and-reorder';
 import { createAttemptOrchestrator, AttemptValidationError } from '@agentic-sdk/services/attempt/attempt-creation-orchestrator';
+import { setupProjectDefaults } from '@/lib/project-utils';
 
 function getOrchestrator() {
   return createAttemptOrchestrator({
@@ -17,6 +18,9 @@ function getOrchestrator() {
     sessionManager,
     startAgent: (params) => agentManager.start(params),
     defaultBasePath: process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(),
+    onProjectForceCreated: async (project) => {
+      await setupProjectDefaults(project.path, project.id);
+    },
   });
 }
 

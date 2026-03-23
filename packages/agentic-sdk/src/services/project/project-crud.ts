@@ -97,7 +97,7 @@ export function createProjectService(db: any) {
     },
 
     /** Validate + setup directory + create project. Throws ProjectValidationError on constraint violation. */
-    async createProject(data: { name: string; path: string }) {
+    async createProject(data: { id?: string; name: string; path: string }) {
       if (!data.name || !data.path) throw new ProjectValidationError('Name and path are required', 400);
       try {
         await this.setupProjectDirectory(data.path);
