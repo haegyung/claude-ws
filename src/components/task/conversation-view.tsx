@@ -5,11 +5,12 @@ import { Loader2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { RunningDots, useRandomStatusVerb } from '@/components/ui/running-dots';
 import { PendingQuestionIndicator } from '@/components/task/pending-question-indicator';
+import { TrackedTasksBlock } from '@/components/claude/tracked-tasks-block';
 import { AuthErrorMessage } from '@/components/auth/auth-error-message';
 import { cn } from '@/lib/utils';
 import type { ClaudeOutput, PendingFile } from '@/types';
 import { useTranslations } from 'next-intl';
-import { buildToolResultsMap, hasVisibleContent, findAuthError, findLastToolUseId } from './conversation-view-utils';
+import { buildToolResultsMap, hasVisibleContent, findAuthError, findLastToolUseId, buildTrackedTasksFromMessages } from './conversation-view-utils';
 import type { ActiveQuestion, ConversationTurn } from './conversation-view-utils';
 import { useConversationAutoScroll } from './use-conversation-auto-scroll';
 import { renderMessage } from './conversation-view-content-block-renderer';
@@ -59,6 +60,7 @@ export function ConversationView({
   // MUST be called before any early returns per React Rules of Hooks
   const currentToolResultsMap = useMemo(() => buildToolResultsMap(currentMessages), [currentMessages]);
   const currentLastToolUseId = useMemo(() => findLastToolUseId(currentMessages), [currentMessages]);
+  const trackedTasks = useMemo(() => buildTrackedTasksFromMessages(currentMessages), [currentMessages]);
 
   useConversationAutoScroll(scrollAreaRef, currentMessages, historicalTurns, isRunning, isLoading);
 
@@ -97,6 +99,22 @@ export function ConversationView({
     prevAttemptIdRef.current = currentAttemptId;
     if (currentAttemptId && prevId && currentAttemptId !== prevId) loadHistory(true);
   }, [currentAttemptId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh history when the tab/window regains visibility or focus
+  // This catches missed socket events from tab switches, network blips, etc.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadHistory(true);
+    };
+    const handleFocus = () => loadHistory(true);
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [taskId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) {
     return (
@@ -145,6 +163,9 @@ export function ConversationView({
                 renderMessage({ output: msg, index: idx, isStreaming: true, toolResultsMap: currentToolResultsMap, lastToolUseId: currentLastToolUseId, onOpenQuestion })
               )}
             </div>
+            {trackedTasks && trackedTasks.length > 0 && (
+              <TrackedTasksBlock tasks={trackedTasks} />
+            )}
             {activeQuestion && onOpenQuestion && (
               <PendingQuestionIndicator questions={activeQuestion.questions} onOpen={onOpenQuestion} />
             )}

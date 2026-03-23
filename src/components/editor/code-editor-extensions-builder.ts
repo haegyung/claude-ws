@@ -8,14 +8,13 @@
  */
 
 import { useMemo } from 'react';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import { languages } from './languages';
 import { gotoDefinitionExtension } from './extensions/goto-definition';
 import type { ExtractedSymbol, DefinitionInfo } from './extensions/goto-definition';
 import { markerLineHighlightExtension } from './extensions/marker-line-highlight';
-import { cursorSelectionDark, cursorSelectionLight } from './extensions/cursor-selection-theme';
+import { pierreDark, pierreLight } from './extensions/pierre-theme';
 import { inlineEditExtension, type InlineEditSelection } from './extensions/inline-edit';
 import { addToContextExtension, type ContextSelection } from './extensions/add-to-context';
 
@@ -42,16 +41,6 @@ interface UseEditorExtensionsOptions {
   handleAddToContext: (selection: ContextSelection) => void;
 }
 
-const transparentTheme = EditorView.theme({
-  '&': { backgroundColor: 'transparent !important' },
-  '.cm-scroller': { backgroundColor: 'transparent !important' },
-  '.cm-content': { backgroundColor: 'transparent !important' },
-  '.cm-line': { backgroundColor: 'transparent !important' },
-  '.cm-layer': { backgroundColor: 'transparent !important' },
-  '.cm-gutters': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-  '.cm-lineNumbers': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-  '.cm-lineNumbers .cm-gutterElement': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-});
 
 export const BASIC_SETUP_OPTIONS = {
   lineNumbers: true,
@@ -116,8 +105,7 @@ export function useEditorExtensions({
 
     const exts: Extension[] = [
       EditorView.lineWrapping,
-      transparentTheme,
-      ...(isDarkTheme ? [oneDark, cursorSelectionDark] : [cursorSelectionLight]),
+      ...(isDarkTheme ? pierreDark : pierreLight),
       ...markerLineHighlightExtension,
       ...(langExtension ? [langExtension()] : []),
     ];

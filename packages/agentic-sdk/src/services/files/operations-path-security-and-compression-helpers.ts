@@ -3,7 +3,6 @@
  * Provides home-directory boundary enforcement and zip/tar/gz decompression utilities.
  */
 import path from 'path';
-import os from 'os';
 import { createReadStream, createWriteStream } from 'fs';
 import { createGunzip } from 'zlib';
 import { pipeline } from 'stream/promises';
@@ -14,14 +13,9 @@ import * as tar from 'tar';
 // Path security helpers
 // ---------------------------------------------------------------------------
 
-/** Resolve rootPath and assert it is within the user's home directory */
+/** Resolve rootPath and return the absolute path */
 export function validateRootPath(rootPath: string): string {
-  const resolved = path.resolve(rootPath);
-  const home = os.homedir();
-  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
-    throw new Error('Root path outside home directory');
-  }
-  return resolved;
+  return path.resolve(rootPath);
 }
 
 /** Resolve targetPath and assert it does not escape allowedRoot */

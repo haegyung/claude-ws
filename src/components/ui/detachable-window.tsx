@@ -284,7 +284,7 @@ export function DetachableWindow({
       ref={windowRef}
       onMouseDown={handleWindowFocus}
       className={cn(
-        'fixed bg-background border-2 shadow-lg rounded-lg overflow-hidden flex flex-col',
+        'fixed flex flex-col',
         isDragging && 'cursor-grabbing',
         className
       )}
@@ -296,54 +296,57 @@ export function DetachableWindow({
         zIndex: zIndex,
       }}
     >
-      {/* Draggable Header */}
-      <div
-        className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 cursor-grab hover:bg-muted/50 transition-colors select-none gap-2 relative"
-        onMouseDown={handleDragStart}
-        style={{ height: `${HEADER_HEIGHT}px` }}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          {title || (
-            <>
-              <GripVertical className="size-4 text-muted-foreground shrink-0" />
-              <span className="text-sm font-medium">Chat</span>
-            </>
+      {/* Inner container clips content to rounded corners */}
+      <div className="flex flex-col flex-1 min-h-0 bg-background border-2 shadow-lg rounded-lg overflow-hidden">
+        {/* Draggable Header */}
+        <div
+          className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 cursor-grab hover:bg-muted/50 transition-colors select-none gap-2 relative"
+          onMouseDown={handleDragStart}
+          style={{ height: `${HEADER_HEIGHT}px` }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {title || (
+              <>
+                <GripVertical className="size-4 text-muted-foreground shrink-0" />
+                <span className="text-sm font-medium">Chat</span>
+              </>
+            )}
+          </div>
+          {titleCenter && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-sm text-muted-foreground text-center line-clamp-2 max-w-[50%] leading-tight font-medium">
+                  {titleCenter}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs">
+                <p className="break-words whitespace-pre-wrap">{String(titleCenter)}</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+          <div className="flex items-center gap-1 min-w-0" data-no-drag>
+            {headerEnd}
+            <button
+              onClick={handleClose}
+              className="p-1 hover:bg-accent rounded transition-colors shrink-0"
+              title="Close"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <div ref={contentScrollRef} className="flex-1 overflow-auto" data-detached-scroll-container>
+            {children}
+          </div>
+          {footer && (
+            <div className="flex-shrink-0 bg-background">
+              {footer}
+            </div>
           )}
         </div>
-        {titleCenter && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-sm text-muted-foreground text-center line-clamp-2 max-w-[50%] leading-tight font-medium">
-                {titleCenter}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-xs">
-              <p className="break-words whitespace-pre-wrap">{String(titleCenter)}</p>
-            </TooltipContent>
-          </Tooltip>
-        )}
-        <div className="flex items-center gap-1 min-w-0" data-no-drag>
-          {headerEnd}
-          <button
-            onClick={handleClose}
-            className="p-1 hover:bg-accent rounded transition-colors shrink-0"
-            title="Close"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <div ref={contentScrollRef} className="flex-1 overflow-auto" data-detached-scroll-container>
-          {children}
-        </div>
-        {footer && (
-          <div className="flex-shrink-0 bg-background">
-            {footer}
-          </div>
-        )}
       </div>
 
       <DetachableWindowResizeHandles onResizeStart={handleResizeStart} />

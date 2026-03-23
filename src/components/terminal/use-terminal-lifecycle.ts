@@ -52,7 +52,7 @@ export function useTerminalLifecycle({ terminalId, isVisible, isMobile }: UseTer
       const { Terminal } = await import('@xterm/xterm');
       const { FitAddon } = await import('@xterm/addon-fit');
       const { WebLinksAddon } = await import('@xterm/addon-web-links');
-      // @ts-expect-error -- CSS module import handled by Next.js bundler
+      // @ts-ignore -- CSS module import handled by Next.js bundler
       await import('@xterm/xterm/css/xterm.css');
 
       if (!container || !container.isConnected) return;

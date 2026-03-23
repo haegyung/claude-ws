@@ -30,6 +30,8 @@ export class CLISession implements ProviderSession {
   activeBackgroundAgents: number = 0;
   /** Timer ref for background agent wait polling — cleared on cancel */
   backgroundWaitTimer: ReturnType<typeof setInterval> | null = null;
+  /** True when AskUserQuestion popup is shown but user hasn't answered yet — delays stdin close */
+  waitingForUserAnswer = false;
   private pendingQuestion: PendingQuestion | null = null;
 
   constructor(
@@ -60,6 +62,23 @@ export class CLISession implements ProviderSession {
       message: {
         role: 'user',
         content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+      },
+    });
+    return this.child.stdin.write(msg + '\n');
+  }
+
+  /**
+   * Write a follow-up text message to the CLI process stdin.
+   * Used to send AskUserQuestion answers as a "Chat about this" message.
+   * Returns false if stdin is unavailable or already destroyed.
+   */
+  writeUserMessage(text: string): boolean {
+    if (!this.child.stdin || this.child.stdin.destroyed) return false;
+    const msg = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
       },
     });
     return this.child.stdin.write(msg + '\n');

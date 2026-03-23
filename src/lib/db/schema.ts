@@ -10,6 +10,9 @@ export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   path: text('path').notNull().unique(),
+  autopilotMode: text('autopilot_mode', {
+    enum: ['off', 'autonomous', 'ask'],
+  }).notNull().default('off'),
   createdAt: integer('created_at', { mode: 'number' })
     .notNull()
     .$defaultFn(() => Date.now()),
@@ -33,6 +36,8 @@ export const tasks = sqliteTable(
     position: integer('position').notNull(),
     chatInit: integer('chat_init', { mode: 'boolean' }).notNull().default(false),
     lastModel: text('last_model'),
+    lastProvider: text('last_provider'),
+    pendingFileIds: text('pending_file_ids'),
     rewindSessionId: text('rewind_session_id'),
     rewindMessageUuid: text('rewind_message_uuid'),
     createdAt: integer('created_at', { mode: 'number' })

@@ -5,11 +5,16 @@ import createNextIntlPlugin from 'next-intl/plugin';
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
 const nextConfig: NextConfig = {
+  // Allow dev access through Cloudflare proxy
+  allowedDevOrigins: [
+    'localhost',
+    ...(process.env.NEXT_PUBLIC_URL ? [new URL(process.env.NEXT_PUBLIC_URL).hostname] : []),
+  ],
   // Enable gzip compression for responses
   compress: true,
   // Transpile xterm packages for proper CSS/ESM handling
   transpilePackages: [
-    '@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links',
+    '@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@pierre/diffs',
     // Force Turbopack to compile these as a single bundle to avoid
     // "module factory not available" HMR errors with shared @lezer/common
     '@codemirror/state', '@codemirror/view', '@codemirror/language',
@@ -20,7 +25,10 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/': ['./src/**/*'],
   },
-
+  turbopack: {
+    root: path.join(__dirname),
+  },
+  serverExternalPackages: ['better-sqlite3', 'node-pty'],
   experimental: {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons', 'date-fns', 'lodash'],
   },

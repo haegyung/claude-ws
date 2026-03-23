@@ -102,11 +102,22 @@ export function TeamView({ className }: TeamViewProps) {
       <>
         <div className="fixed inset-0 bg-black/50 z-40 sm:hidden" onClick={closePanel} />
         <div className={cn(
-          'fixed right-0 top-0 h-full w-[50vw] min-w-[400px] max-w-[800px] bg-background border-l shadow-lg z-50 flex flex-col items-center justify-center',
+          'fixed right-0 top-0 h-full w-[50vw] min-w-[400px] max-w-[800px] bg-background border-l shadow-lg z-50 flex flex-col',
           className,
         )}>
-          <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          <p className="mt-2 text-sm text-muted-foreground">Loading agent data...</p>
+          <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0">
+            <div className="flex items-center gap-2">
+              <Network className="size-4 text-muted-foreground" />
+              <h2 className="font-semibold text-sm">Agent Team</h2>
+            </div>
+            <Button variant="ghost" size="icon" onClick={closePanel} className="h-7 w-7">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            <p className="mt-2 text-sm text-muted-foreground">Loading agent data...</p>
+          </div>
         </div>
       </>
     );

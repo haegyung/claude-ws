@@ -66,12 +66,12 @@ export function CodeEditorWithInlineEdit({
   enableInlineEdit = true,
   onSelectionChange,
 }: CodeEditorWithInlineEditProps) {
-  const { theme } = useTheme();
+  const { resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const [height, setHeight] = useState<number>(400);
 
-  const isDarkTheme = theme?.includes('dark') || false;
+  const isDarkTheme = resolvedTheme === 'dark';
 
   // Definition handler (go-to-definition, symbol lookup)
   const definitionHandler = useDefinitionHandler({
@@ -242,6 +242,7 @@ export function CodeEditorWithInlineEdit({
       <CodeMirror
         value={value}
         height={`${height}px`}
+        theme="none"
         extensions={extensions}
         onChange={onChange}
         readOnly={readOnly}

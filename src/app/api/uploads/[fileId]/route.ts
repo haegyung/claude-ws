@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
 import path from 'path';
 import { db } from '@/lib/db';
 import { getMimeType } from '@/lib/file-utils';
 import { createUploadService } from '@agentic-sdk/services/attempt/attempt-file-upload-storage';
+import { findUploadedFile } from '@agentic-sdk/services/upload/tmp-file-processor-and-cleanup';
 
-const uploadsDir = path.join(
-  process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || process.cwd(), 'data'),
-  'uploads'
-);
-const uploadService = createUploadService(db, uploadsDir);
+function getUploadsDir() {
+  return path.join(
+    process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(), 'data'),
+    'uploads'
+  );
+}
+
+function getUploadService() {
+  return createUploadService(db, getUploadsDir());
+}
 
 // GET /api/uploads/[fileId] - Serve uploaded file by record ID
 export async function GET(
@@ -19,12 +25,28 @@ export async function GET(
   try {
     const { fileId } = await params;
 
+    const uploadsDir = getUploadsDir();
+    const uploadService = getUploadService();
+
     const record = await uploadService.getById(fileId);
     if (!record) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
-    const filePath = path.join(uploadsDir, record.filename);
+    // Resolve file path from DB filename (may include attemptId subdirectory)
+    let filePath = path.join(uploadsDir, record.filename);
+
+    // Fallback: if file not found at stored path, scan attempt directories by fileId
+    try {
+      await access(filePath);
+    } catch {
+      const found = await findUploadedFile(uploadsDir, fileId);
+      if (!found) {
+        return NextResponse.json({ error: 'File not found on disk' }, { status: 404 });
+      }
+      filePath = found.path;
+    }
+
     const buffer = await readFile(filePath);
     const mimeType = record.mimeType || getMimeType(record.filename);
 
@@ -48,6 +70,7 @@ export async function DELETE(
 ) {
   try {
     const { fileId } = await params;
+    const uploadService = getUploadService();
 
     const record = await uploadService.getById(fileId);
     if (!record) {

@@ -75,8 +75,14 @@ export function GitCommitForm({
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || t('failedToGenerateCommit'));
+        let errorMsg = t('failedToGenerateCommit');
+        try {
+          const data = await res.json();
+          errorMsg = data.error || errorMsg;
+        } catch {
+          // Response was not JSON (e.g. HTML error page)
+        }
+        throw new Error(errorMsg);
       }
 
       const { title, description } = await res.json();

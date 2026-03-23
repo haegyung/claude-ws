@@ -57,10 +57,12 @@ export async function processAttachments(
       const extClean = ext.startsWith('.') ? ext.slice(1) : ext;
       const originalName = extClean ? `attachment.${extClean}` : 'attachment';
 
+      // Store path relative to uploadsDir including attemptId subdirectory
+      const storedFilename = `${attemptId}/${newFilename}`;
       await db.insert(schema.attemptFiles).values({
         id: fileId,
         attemptId,
-        filename: newFilename,
+        filename: storedFilename,
         originalName,
         mimeType,
         size: stats.size,

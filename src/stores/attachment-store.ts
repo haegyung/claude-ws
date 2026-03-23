@@ -18,6 +18,7 @@ interface AttachmentState {
   getUploadedFileIds: (taskId: string) => string[];
   hasUploadingFiles: (taskId: string) => boolean;
   moveFiles: (fromTaskId: string, toTaskId: string) => void;
+  restoreFromDb: (taskId: string, fileInfos: (string | { tempId: string; originalName?: string; mimeType?: string; size?: number })[]) => void;
 }
 
 export const useAttachmentStore = create<AttachmentState>((set, get) => ({
@@ -59,6 +60,28 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => ({
       delete updated[fromTaskId];
       return { pendingFilesByTask: updated };
     });
+  },
+
+  restoreFromDb: (taskId, fileInfos) => {
+    // Restore pending file entries from DB-stored file metadata (no File object, already uploaded)
+    const existing = get().pendingFilesByTask[taskId] || [];
+    const existingIds = new Set(existing.map(f => f.tempId));
+    const newFiles: PendingFile[] = fileInfos
+      .filter((info: any) => !existingIds.has(typeof info === 'string' ? info : info.tempId))
+      .map((info: any) => {
+        if (typeof info === 'string') {
+          return { tempId: info, originalName: 'attachment', mimeType: 'application/octet-stream', size: 0, status: 'uploaded' as const };
+        }
+        return { tempId: info.tempId, originalName: info.originalName || 'attachment', mimeType: info.mimeType || 'application/octet-stream', size: info.size || 0, status: 'uploaded' as const };
+      });
+    if (newFiles.length > 0) {
+      set((state) => ({
+        pendingFilesByTask: {
+          ...state.pendingFilesByTask,
+          [taskId]: [...existing, ...newFiles],
+        },
+      }));
+    }
   },
 
   // API actions — delegated to attachment-store-upload-and-remove-api-actions

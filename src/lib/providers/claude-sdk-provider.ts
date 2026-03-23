@@ -12,6 +12,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { existsSync, mkdirSync } from 'fs';
 import { query, type Query } from '@anthropic-ai/claude-agent-sdk';
 import { adaptSDKMessage, isValidSDKMessage, type SDKResultMessage } from '../sdk-event-adapter';
 import { createLogger } from '../logger';
@@ -83,15 +84,21 @@ export class ClaudeSDKProvider extends EventEmitter implements Provider {
   ): Promise<void> {
     const { attemptId, controller } = session;
     try {
+      // Ensure projectPath (used as cwd for SDK subprocess) exists — spawn throws
+      // misleading "executable not found" ENOENT if cwd is missing
+      if (!existsSync(projectPath)) {
+        log.warn({ projectPath, attemptId }, 'Project path missing, creating directory');
+        mkdirSync(projectPath, { recursive: true });
+      }
+
       const mcpConfig = loadMCPConfig(projectPath);
       const mcpToolWildcards = mcpConfig?.mcpServers ? getMCPToolWildcards(mcpConfig.mcpServers) : [];
       const effectiveModel = model ? this.resolveModel(model) : 'opus';
 
       const opts = buildQueryOptions({
-        projectPath, model: effectiveModel, sessionOptions, maxTurns, systemPromptAppend,
+        projectPath, model: effectiveModel, sessionOptions, maxTurns,
         mcpServers: mcpConfig?.mcpServers, mcpToolWildcards, controller,
         canUseToolCallback: this.makeCanUseTool(attemptId),
-        stderrHandler: (data) => log.error({ stderr: data.slice(0, 500), attemptId }, 'Claude process stderr'),
       });
 
       log.info({

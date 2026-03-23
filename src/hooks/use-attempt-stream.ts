@@ -18,9 +18,9 @@ interface UseAttemptStreamOptions {
 interface UseAttemptStreamResult {
   messages: ClaudeOutput[];
   isConnected: boolean;
-  startAttempt: (taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string) => void;
+  startAttempt: (taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string, provider?: string) => void;
   cancelAttempt: () => void;
-  interruptAndSend: (taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string) => Promise<void>;
+  interruptAndSend: (taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string, provider?: string) => Promise<void>;
   currentAttemptId: string | null;
   currentPrompt: string | null;
   isRunning: boolean;
@@ -104,7 +104,7 @@ export function useAttemptStream(
     }
   }, [isConnected, currentAttemptId]);
 
-  const startAttempt = useCallback((taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string) => {
+  const startAttempt = useCallback((taskId: string, prompt: string, displayPrompt?: string, fileIds?: string[], model?: string, provider?: string) => {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
     currentTaskIdRef.current = taskId;
@@ -117,7 +117,7 @@ export function useAttemptStream(
       setMessages([]);
       socket.emit('attempt:subscribe', { attemptId: data.attemptId });
     });
-    socket.emit('attempt:start', { taskId, prompt, displayPrompt, fileIds, model });
+    socket.emit('attempt:start', { taskId, prompt, displayPrompt, fileIds, model, provider });
   }, [isConnected]);
 
   // Check for running attempt on mount/taskId change

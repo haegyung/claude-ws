@@ -28,11 +28,11 @@ function getOrCreate(id: ProviderId): Provider {
 
 /**
  * Get the active provider based on CLAUDE_PROVIDER env var.
- * Default: 'claude-cli'
+ * Default: 'claude-sdk'
  */
 export function getActiveProvider(): Provider {
   const envProvider = process.env.CLAUDE_PROVIDER;
-  const id: ProviderId = envProvider === 'sdk' ? 'claude-sdk' : 'claude-cli';
+  const id: ProviderId = envProvider === 'cli' ? 'claude-cli' : 'claude-sdk';
   return getOrCreate(id);
 }
 

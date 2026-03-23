@@ -1,8 +1,9 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { buildToolResultsMap, findLastToolUseId } from './conversation-view-utils';
+import { buildToolResultsMap, findLastToolUseId, buildTrackedTasksFromMessages } from './conversation-view-utils';
 import { renderMessage } from './conversation-view-content-block-renderer';
+import { TrackedTasksBlock } from '@/components/claude/tracked-tasks-block';
 import type { ConversationTurn } from './conversation-view-utils';
 
 interface ConversationHistoricalAssistantTurnProps {
@@ -22,6 +23,7 @@ export function ConversationHistoricalAssistantTurn({
   const isCancelled = turn.attemptStatus === 'cancelled';
   const toolResultsMap = buildToolResultsMap(turn.messages);
   const lastToolUseId = findLastToolUseId(turn.messages);
+  const trackedTasks = buildTrackedTasksFromMessages(turn.messages);
 
   if (isCancelled) {
     console.log('[ConversationView] Rendering cancelled assistant turn:', turn.attemptId, turn.attemptStatus, 'messages:', turn.messages.length);
@@ -31,6 +33,9 @@ export function ConversationHistoricalAssistantTurn({
     <div className="space-y-4 w-full max-w-full overflow-hidden">
       {turn.messages.map((msg, idx) =>
         renderMessage({ output: msg, index: idx, isStreaming: false, toolResultsMap, lastToolUseId, onOpenQuestion })
+      )}
+      {trackedTasks.length > 0 && (
+        <TrackedTasksBlock tasks={trackedTasks} />
       )}
       <div className="flex justify-end">
         {isCancelled && (

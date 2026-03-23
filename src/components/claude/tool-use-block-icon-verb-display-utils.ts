@@ -27,6 +27,8 @@ export function getToolIcon(name: string) {
     Skill: Zap,
     Task: Zap,
     Agent: Zap,
+    TaskCreate: CheckSquare,
+    TaskUpdate: CheckSquare,
   };
   return icons[name] || FileText;
 }
@@ -47,6 +49,8 @@ export function getToolActiveVerb(name: string): string {
     Task: 'Delegating',
     Agent: 'Delegating',
     AskUserQuestion: 'Waiting for',
+    TaskCreate: 'Creating task',
+    TaskUpdate: 'Updating task',
   };
   return verbs[name] || 'Processing';
 }
@@ -90,6 +94,10 @@ export function getToolDisplay(name: string, input: any): string {
     case 'Task':
     case 'Agent':
       return input.description || 'task...';
+    case 'TaskCreate':
+      return input.subject || 'new task';
+    case 'TaskUpdate':
+      return input.subject || (input.status ? `→ ${input.status}` : 'task');
     default:
       return name;
   }
@@ -123,6 +131,16 @@ export function getResultSummary(name: string, result?: string): string | null {
       return 'written';
     case 'Edit':
       return 'edited';
+    case 'TaskCreate':
+      return 'created';
+    case 'TaskUpdate': {
+      try {
+        const parsed = JSON.parse(result);
+        return parsed.status || 'updated';
+      } catch {
+        return 'updated';
+      }
+    }
     default:
       return null;
   }

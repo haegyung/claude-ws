@@ -11,7 +11,6 @@ import {
 import { useTranslations } from 'next-intl';
 import { Task, TaskStatus, KANBAN_COLUMNS } from '@/types';
 import { Column } from './column';
-import { BoardColumnVisibilityFilter } from '@/components/kanban/board-column-visibility-filter';
 import { BoardDragOverlay } from '@/components/kanban/board-drag-overlay';
 import { BoardMobileColumnSwipeView } from '@/components/kanban/board-mobile-column-swipe-view';
 import { useTaskStore } from '@/stores/task-store';
@@ -35,7 +34,7 @@ export function Board({ attempts = [], onCreateTask, searchQuery = '' }: BoardPr
   const isMobile = useTouchDetection();
   const isMobileViewport = useIsMobileViewport();
 
-  const { hiddenColumns, toggleColumn } = usePanelLayoutStore();
+  const { hiddenColumns } = usePanelLayoutStore();
 
   const visibleColumns = useMemo(
     () => KANBAN_COLUMNS.filter((col) => !hiddenColumns.includes(col.id)),
@@ -129,22 +128,22 @@ export function Board({ attempts = [], onCreateTask, searchQuery = '' }: BoardPr
   if (isMobileViewport) {
     return (
       <BoardMobileColumnSwipeView
-        sensors={sensors}
-        visibleColumns={visibleColumns}
-        tasksByStatus={tasksByStatus}
-        attemptCounts={attemptCounts}
-        mobileActiveColumn={mobileActiveColumn}
-        hoveredStatusTab={hoveredStatusTab}
-        activeTask={activeTask}
-        isMobile={isMobile}
-        searchQuery={searchQuery}
-        chatHistoryMatches={chatHistoryMatches}
-        onCreateTask={onCreateTask}
-        onMobileActiveColumnChange={setMobileActiveColumn}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-        onDragCancel={handleDragCancel}
+          sensors={sensors}
+          visibleColumns={visibleColumns}
+          tasksByStatus={tasksByStatus}
+          attemptCounts={attemptCounts}
+          mobileActiveColumn={mobileActiveColumn}
+          hoveredStatusTab={hoveredStatusTab}
+          activeTask={activeTask}
+          isMobile={isMobile}
+          searchQuery={searchQuery}
+          chatHistoryMatches={chatHistoryMatches}
+          onCreateTask={onCreateTask}
+          onMobileActiveColumnChange={setMobileActiveColumn}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
       />
     );
   }
@@ -164,7 +163,6 @@ export function Board({ attempts = [], onCreateTask, searchQuery = '' }: BoardPr
       onDragCancel={handleDragCancel}
     >
       <div className="flex flex-col h-full">
-        <BoardColumnVisibilityFilter hiddenColumns={hiddenColumns} onToggleColumn={toggleColumn} />
         <div className="flex gap-4 flex-1 min-h-0 overflow-x-auto pb-4 pl-4">
           {visibleColumns.map((column) => (
             <Column

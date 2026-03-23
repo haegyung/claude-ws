@@ -147,6 +147,105 @@ export function isToolExecuting(
   return toolId === lastToolUseId;
 }
 
+/**
+ * Extract tracked tasks from messages (TaskCreate/TaskUpdate tool calls + results).
+ * Builds a consolidated task list by scanning tool_use blocks and matching results.
+ */
+export interface StreamTrackedTask {
+  id: string;           // toolUseId
+  taskId?: string;      // actual numeric taskId from result
+  subject: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'deleted';
+  owner?: string;
+  activeForm?: string;
+}
+
+export function buildTrackedTasksFromMessages(messages: ClaudeOutput[]): StreamTrackedTask[] {
+  const tasks = new Map<string, StreamTrackedTask>();      // toolUseId → task
+  const taskIdToToolId = new Map<string, string>();         // actual taskId → toolUseId
+
+  // Build a tool results map for looking up TaskCreate results
+  const resultsMap = buildToolResultsMap(messages);
+
+  // Collect all tool_use entries (both formats: inside assistant messages AND top-level)
+  interface ToolEntry { id: string; name: string; input: Record<string, unknown> }
+  const toolUses: ToolEntry[] = [];
+
+  for (const msg of messages) {
+    // Format 1: assistant message with tool_use blocks in content
+    if (msg.type === 'assistant' && msg.message?.content) {
+      for (const block of msg.message.content) {
+        if (block.type === 'tool_use' && block.id && block.name) {
+          toolUses.push({ id: block.id, name: block.name, input: (block.input || {}) as Record<string, unknown> });
+        }
+      }
+    }
+    // Format 2: top-level tool_use message
+    if (msg.type === 'tool_use' && msg.id && msg.tool_name) {
+      toolUses.push({ id: msg.id, name: msg.tool_name, input: (msg.tool_data || {}) as Record<string, unknown> });
+    }
+  }
+
+  // Pass 1: Find all TaskCreate calls
+  for (const tool of toolUses) {
+    if (tool.name !== 'TaskCreate') continue;
+    const input = tool.input;
+    const toolUseId = tool.id;
+
+    tasks.set(toolUseId, {
+      id: toolUseId,
+      subject: (input.subject as string) || 'Untitled task',
+      status: 'pending',
+      activeForm: input.activeForm as string | undefined,
+    });
+
+    // Check if we have a result with the actual taskId
+    const result = resultsMap.get(toolUseId);
+    if (result?.result) {
+      // Try JSON format: {"taskId": "5", "status": "pending"}
+      try {
+        const parsed = JSON.parse(result.result);
+        if (parsed.taskId) {
+          taskIdToToolId.set(String(parsed.taskId), toolUseId);
+          tasks.get(toolUseId)!.taskId = String(parsed.taskId);
+        }
+        if (parsed.status) {
+          tasks.get(toolUseId)!.status = parsed.status;
+        }
+      } catch {
+        // Try text format: "Task #5 created successfully: ..."
+        const match = result.result.match(/Task\s*#(\d+)/i) ||
+                      result.result.match(/taskId["\s:]+(\d+)/);
+        if (match) {
+          taskIdToToolId.set(match[1], toolUseId);
+          tasks.get(toolUseId)!.taskId = match[1];
+        }
+      }
+    }
+  }
+
+  // Pass 2: Apply TaskUpdate calls
+  for (const tool of toolUses) {
+    if (tool.name !== 'TaskUpdate') continue;
+    const input = tool.input;
+    if (!input.taskId) continue;
+
+    const targetTaskId = String(input.taskId);
+    // Resolve: could be an actual taskId or a toolUseId
+    const toolUseId = taskIdToToolId.get(targetTaskId) || targetTaskId;
+    const task = tasks.get(toolUseId);
+
+    if (task) {
+      if (input.status) task.status = input.status as StreamTrackedTask['status'];
+      if (input.owner) task.owner = input.owner as string;
+      if (input.subject) task.subject = input.subject as string;
+      if (input.activeForm) task.activeForm = input.activeForm as string;
+    }
+  }
+
+  return Array.from(tasks.values());
+}
+
 /** Check if a MIME type represents an image. */
 export function isImageMimeType(mimeType: string): boolean {
   return mimeType.startsWith('image/');

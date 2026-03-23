@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, type RefObject } from 'react';
+import { useCallback, useRef, type RefObject } from 'react';
 import type { Socket } from 'socket.io-client';
 import type { ClaudeOutput } from '@/types';
 import { useRunningTasksStore } from '@/stores/running-tasks-store';
@@ -49,6 +49,7 @@ export function useAttemptQuestions({
   setMessages,
 }: UseAttemptQuestionsOptions) {
   const { addRunningTask } = useRunningTasksStore();
+  const answeringRef = useRef(false);
 
   const fetchPendingQuestion = useCallback(async (attemptId: string, signal?: AbortSignal) => {
     try {
@@ -111,7 +112,8 @@ export function useAttemptQuestions({
 
   const answerQuestion = useCallback(async (questions: Question[], answers: Record<string, string>) => {
     const socket = socketRef.current;
-    if (!socket || !activeQuestion) return;
+    if (!socket || !activeQuestion || answeringRef.current) return;
+    answeringRef.current = true; // Prevent double-sends from React re-renders
 
     const attemptId = activeQuestion.attemptId;
     const answeredToolUseId = activeQuestion.toolUseId;
@@ -155,6 +157,7 @@ export function useAttemptQuestions({
     setActiveQuestion((prev) =>
       prev?.toolUseId === answeredToolUseId ? null : prev
     );
+    answeringRef.current = false;
   }, [activeQuestion]);
 
   const cancelQuestion = useCallback(() => {

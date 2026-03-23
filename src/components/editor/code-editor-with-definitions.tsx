@@ -2,12 +2,11 @@
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 import { useTheme } from 'next-themes';
 import { languages } from './languages';
 import { gotoDefinitionExtension, type ExtractedSymbol, type DefinitionInfo } from './extensions/goto-definition';
-import { cursorSelectionDark, cursorSelectionLight } from './extensions/cursor-selection-theme';
+import { pierreDark, pierreLight } from './extensions/pierre-theme';
 import { DefinitionPopup } from './definition-popup';
 import { useSidebarStore } from '@/stores/sidebar-store';
 
@@ -48,7 +47,7 @@ export function CodeEditorWithDefinitions({
   basePath,
   enableDefinitions = true,
 }: CodeEditorWithDefinitionsProps) {
-  const { theme } = useTheme();
+  const { resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const [height, setHeight] = useState<number>(400);
@@ -63,7 +62,7 @@ export function CodeEditorWithDefinitions({
   const { openTab, setEditorPosition, setSelectedFile, expandFolder } = useSidebarStore();
 
   // Check if current theme is a dark theme
-  const isDarkTheme = theme?.includes('dark') || false;
+  const isDarkTheme = resolvedTheme === 'dark';
 
   // Calculate actual container height for proper scrolling
   useEffect(() => {
@@ -211,19 +210,7 @@ export function CodeEditorWithDefinitions({
     const baseExtensions = [
       // Enable line wrapping
       EditorView.lineWrapping,
-      // Always override background to transparent
-      EditorView.theme({
-        '&': { backgroundColor: 'transparent !important' },
-        '.cm-scroller': { backgroundColor: 'transparent !important' },
-        '.cm-content': { backgroundColor: 'transparent !important' },
-        '.cm-line': { backgroundColor: 'transparent !important' },
-        '.cm-layer': { backgroundColor: 'transparent !important' },
-        '.cm-gutters': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-        '.cm-lineNumbers': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-        '.cm-lineNumbers .cm-gutterElement': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-      }),
-      // Apply oneDark theme for dark themes, then cursor/selection overrides
-      ...(isDarkTheme ? [oneDark, cursorSelectionDark] : [cursorSelectionLight]),
+      ...(isDarkTheme ? pierreDark : pierreLight),
       ...(langExtension ? [langExtension()] : []),
     ];
 
@@ -263,6 +250,7 @@ export function CodeEditorWithDefinitions({
       <CodeMirror
         value={value}
         height={`${height}px`}
+        theme="none"
         extensions={extensions}
         onChange={onChange}
         readOnly={readOnly}

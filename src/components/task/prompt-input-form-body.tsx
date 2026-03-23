@@ -51,6 +51,7 @@ interface PromptInputFormBodyProps {
   // Toolbar
   hideSendButton: boolean;
   taskLastModel?: string | null;
+  taskLastProvider?: string | null;
   onCancel?: () => void;
   // Stats bar
   hideStats: boolean;
@@ -91,6 +92,7 @@ export function PromptInputFormBody({
   onFileMentionClose,
   hideSendButton,
   taskLastModel,
+  taskLastProvider,
   onCancel,
   hideStats,
   taskStats,
@@ -162,6 +164,7 @@ export function PromptInputFormBody({
             hideSendButton={hideSendButton}
             taskId={taskId}
             taskLastModel={taskLastModel}
+            taskLastProvider={taskLastProvider}
             onCancel={onCancel}
             onOpenFilePicker={onOpenFilePicker}
           />

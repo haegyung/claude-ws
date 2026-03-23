@@ -14,16 +14,7 @@ export async function GET(request: NextRequest) {
       dirPath = dirPath.replace('~', os.homedir());
     }
 
-    // Security: validate path is within home directory
-    const resolved = path.resolve(dirPath);
-    const home = os.homedir();
-    if (!resolved.startsWith(home)) {
-      return NextResponse.json(
-        { error: 'Access denied: path outside home directory' },
-        { status: 403 }
-      );
-    }
-    dirPath = resolved;
+    dirPath = path.resolve(dirPath);
 
     // Ensure path exists and is a directory
     if (!fs.existsSync(dirPath)) {

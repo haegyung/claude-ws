@@ -18,6 +18,7 @@ export function SettingsPage() {
   const [editingName, setEditingName] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [autoCompactEnabled, setAutoCompactEnabled] = useState(false);
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
   const [agentProviderConfigured, setAgentProviderConfigured] = useState(false);
   const [apiAccessKeyConfigured, setApiAccessKeyConfigured] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -27,6 +28,11 @@ export function SettingsPage() {
       .then((res) => res.json())
       .then((data) => { if (data.auto_compact_enabled === 'true') setAutoCompactEnabled(true); });
   }, []);
+
+  useEffect(() => {
+    if (!currentProject) return;
+    setAutopilotEnabled(currentProject.autopilotMode !== 'off' && !!currentProject.autopilotMode);
+  }, [currentProject]);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -55,6 +61,14 @@ export function SettingsPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: 'auto_compact_enabled', value: String(checked) }),
     });
+  };
+
+  const handleAutopilotToggle = async (checked: boolean) => {
+    if (!currentProject) return;
+    setAutopilotEnabled(checked);
+    // Mode toggled via socket event — settings page just toggles between off/autonomous
+    const mode = checked ? 'autonomous' : 'off';
+    await updateProject(currentProject.id, { autopilotMode: mode });
   };
 
   const handleSaveName = async () => {
@@ -131,6 +145,29 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* Autopilot Section */}
+        {currentProject && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">Autopilot</h2>
+            <div className="space-y-3 p-4 border rounded-lg bg-card">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="autopilot" checked={autopilotEnabled}
+                  onCheckedChange={(checked) => handleAutopilotToggle(checked === true)}
+                />
+                <div className="space-y-1">
+                  <label htmlFor="autopilot" className="font-medium leading-none cursor-pointer">
+                    {t('autopilotEnable')}
+                  </label>
+                  <p className="text-sm text-muted-foreground">
+                    {t('autopilotDescription')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <SettingsPageProviderAndApiKeySections
           loadingStatus={loadingStatus}

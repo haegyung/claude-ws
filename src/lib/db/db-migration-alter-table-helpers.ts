@@ -82,6 +82,12 @@ export function runTasksMigrations(sqlite: InstanceType<typeof Database>): void 
 
   // last_model for per-task model selection
   addColumnIfNotExists(sqlite, 'tasks', 'last_model', 'TEXT');
+
+  // last_provider for per-task provider selection
+  addColumnIfNotExists(sqlite, 'tasks', 'last_provider', 'TEXT');
+
+  // pending_file_ids for temp file uploads before first attempt starts
+  addColumnIfNotExists(sqlite, 'tasks', 'pending_file_ids', 'TEXT');
 }
 
 /**

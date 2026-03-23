@@ -2,12 +2,11 @@
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 import { useTheme } from 'next-themes';
 import { languages } from './languages';
 import { markerLineHighlightExtension } from './extensions/marker-line-highlight';
-import { cursorSelectionDark, cursorSelectionLight } from './extensions/cursor-selection-theme';
+import { pierreDark, pierreLight } from './extensions/pierre-theme';
 
 interface EditorPosition {
   lineNumber?: number;
@@ -34,13 +33,13 @@ export function CodeMirrorEditor({
   editorPosition,
   focusOnNavigate = true,
 }: CodeMirrorEditorProps) {
-  const { theme } = useTheme();
+  const { resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const [height, setHeight] = useState<number>(400);
 
   // Check if current theme is a dark theme
-  const isDarkTheme = theme?.includes('dark') || false;
+  const isDarkTheme = resolvedTheme === 'dark';
 
   // Calculate actual container height for proper scrolling
   useEffect(() => {
@@ -102,19 +101,7 @@ export function CodeMirrorEditor({
     return [
       // Enable line wrapping
       EditorView.lineWrapping,
-      // Always override background to transparent
-      EditorView.theme({
-        '&': { backgroundColor: 'transparent !important' },
-        '.cm-scroller': { backgroundColor: 'transparent !important' },
-        '.cm-content': { backgroundColor: 'transparent !important' },
-        '.cm-line': { backgroundColor: 'transparent !important' },
-        '.cm-layer': { backgroundColor: 'transparent !important' },
-        '.cm-gutters': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-        '.cm-lineNumbers': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-        '.cm-lineNumbers .cm-gutterElement': { backgroundColor: 'rgb(255 255 255 / 3%) !important' },
-      }),
-      // Apply oneDark theme for dark themes, then cursor/selection overrides
-      ...(isDarkTheme ? [oneDark, cursorSelectionDark] : [cursorSelectionLight]),
+      ...(isDarkTheme ? pierreDark : pierreLight),
       // Highlight marker lines (>>>>> and <<<<<)
       ...markerLineHighlightExtension,
       ...(langExtension ? [langExtension()] : []),
@@ -131,6 +118,7 @@ export function CodeMirrorEditor({
       <CodeMirror
         value={value}
         height={`${height}px`}
+        theme="none"
         extensions={extensions}
         onChange={onChange}
         readOnly={readOnly}

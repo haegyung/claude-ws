@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Dialog,
@@ -10,8 +10,9 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { File, Loader2, AlertCircle, Edit3, Save, X as XIcon } from 'lucide-react';
-import hljs from 'highlight.js';
+import { File as FileIcon, Loader2, AlertCircle, Edit3, Save, X as XIcon } from 'lucide-react';
+import { File as PierreFile } from '@pierre/diffs/react';
+import { usePierreTheme } from '@/lib/pierre-theme-config';
 import { getFileIconColorClass } from '@/components/agent-factory/plugin-detail-file-icon-color-utils';
 
 export interface FileContent {
@@ -46,25 +47,10 @@ export function PluginDetailFileContentModal({
   onContentSaved,
 }: PluginDetailFileContentModalProps) {
   const tCommon = useTranslations('common');
-  const codeRef = useRef<HTMLElement>(null);
+  const pierreTheme = usePierreTheme();
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState('');
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (fileContent && codeRef.current) {
-      hljs.highlightElement(codeRef.current);
-    }
-  }, [fileContent]);
-
-  useEffect(() => {
-    if (open && fileContent) {
-      const timer = setTimeout(() => {
-        if (codeRef.current) hljs.highlightElement(codeRef.current);
-      }, 50);
-      return () => clearTimeout(timer);
-    }
-  }, [open, fileContent]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) { setIsEditing(false); setEditedContent(''); }
@@ -108,7 +94,7 @@ export function PluginDetailFileContentModal({
       >
         <DialogHeader className="p-4 border-b flex flex-row items-center justify-between space-y-0">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <File className={`w-5 h-5 flex-shrink-0 ${fileContent ? getFileIconColorClass(fileContent.name) : 'text-gray-500'}`} />
+            <FileIcon className={`w-5 h-5 flex-shrink-0 ${fileContent ? getFileIconColorClass(fileContent.name) : 'text-gray-500'}`} />
             <DialogTitle className="text-base truncate">
               {fileContent?.name || 'File'}
             </DialogTitle>
@@ -126,7 +112,7 @@ export function PluginDetailFileContentModal({
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-auto bg-[#0d1117]">
+        <div className="flex-1 overflow-auto">
           {loadingContent ? (
             <div className="flex items-center justify-center h-full">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -141,11 +127,14 @@ export function PluginDetailFileContentModal({
                 autoFocus
               />
             ) : (
-              <pre className="text-sm p-4">
-                <code ref={codeRef} className={`hljs language-${fileContent.language} block overflow-x-auto`}>
-                  {fileContent.content}
-                </code>
-              </pre>
+              <PierreFile
+                file={{ name: fileContent.name, contents: fileContent.content }}
+                options={{
+                  ...pierreTheme,
+                  overflow: 'scroll',
+                  disableFileHeader: true,
+                }}
+              />
             )
           ) : null}
         </div>

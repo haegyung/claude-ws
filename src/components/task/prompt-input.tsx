@@ -27,6 +27,7 @@ interface PromptInputProps {
   className?: string;
   taskId?: string;
   taskLastModel?: string | null;
+  taskLastProvider?: string | null;
   projectPath?: string;
   hideSendButton?: boolean;
   disableSubmitShortcut?: boolean;
@@ -48,6 +49,7 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
   className,
   taskId,
   taskLastModel,
+  taskLastProvider,
   projectPath,
   hideSendButton = false,
   disableSubmitShortcut = false,
@@ -169,6 +171,7 @@ export const PromptInput = forwardRef<PromptInputRef, PromptInputProps>(({
         onFileMentionClose={handleFileMentionClose}
         hideSendButton={hideSendButton}
         taskLastModel={taskLastModel}
+        taskLastProvider={taskLastProvider}
         onCancel={onCancel}
         hideStats={hideStats}
         taskStats={taskStats}

@@ -114,7 +114,23 @@
     "deleteTask": "Delete task",
     "moveTo": "Move to",
     "duplicate": "Duplicate",
-    "delete": "Delete"
+    "delete": "Delete",
+    "autopilot": "Autopilot",
+    "autopilotOn": "Autopilot enabled",
+    "autopilotOff": "OFF",
+    "autopilotAutonomous": "Autonomous",
+    "autopilotAsk": "Ask",
+    "autopilotPlanning": "Analyzing task dependencies...",
+    "autopilotProcessing": "Processing: {title}",
+    "autopilotQueue": "{count} tasks in queue",
+    "autopilotRetrying": "Retrying ({count}/{max})",
+    "autopilotSkipped": "Skipped (failed {max}x): {title}",
+    "autopilotIdle": "All tasks processed",
+    "autopilotProgress": "{processed}/{total} tasks done",
+    "autopilotInfoTitle": "Autopilot Modes",
+    "autopilotInfoOff": "No autopilot. Tasks work normally.",
+    "autopilotInfoAutonomous": "Agent gathers requirements, then works fully autonomously. No questions during execution.",
+    "autopilotInfoAsk": "Agent can ask questions during execution. Worker waits for answers before resuming."
   },
   "task": {
     "title": "Title",
@@ -425,7 +441,9 @@
     "configureAuthDescription": "Configure how to authenticate with Claude API",
     "setUpRemoteAccess": "Set up authentication for remote access",
     "projectSettings": "Project Settings",
-    "noProjectsAvailable": "No projects available"
+    "noProjectsAvailable": "No projects available",
+    "autopilotEnable": "Enable Autopilot",
+    "autopilotDescription": "Automatically pick and process tasks from the Todo column. The agent will analyze task dependencies, reorder them optimally, and process them one by one with up to 3 retries on failure."
   },
   "auth": {
     "apiKeyRequired": "API Key Required",

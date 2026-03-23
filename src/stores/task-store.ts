@@ -39,7 +39,7 @@ interface TaskStore {
 
   // API actions (delegated to task-store-api-actions)
   fetchTasks: (projectIds: string[]) => Promise<void>;
-  createTask: (projectId: string, title: string, description: string | null) => Promise<Task>;
+  createTask: (projectId: string, title: string, description: string | null, pendingFileIds?: any[]) => Promise<Task>;
   duplicateTask: (task: Task) => Promise<Task>;
   deleteTasksByStatus: (status: TaskStatus) => Promise<void>;
   reorderTasks: (taskId: string, newStatus: TaskStatus, newPosition: number) => Promise<void>;
@@ -112,7 +112,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   // API actions — delegate to companion module
   fetchTasks: (projectIds) => fetchTasksAction(projectIds, set as Parameters<typeof fetchTasksAction>[1]),
 
-  createTask: (projectId, title, description) => createTaskAction(projectId, title, description, get),
+  createTask: (projectId, title, description, pendingFileIds) => createTaskAction(projectId, title, description, get, pendingFileIds),
 
   duplicateTask: (task) => duplicateTaskAction(task, get),
 

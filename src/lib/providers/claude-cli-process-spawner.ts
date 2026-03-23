@@ -47,11 +47,16 @@ export function spawnCLIProcess(opts: SpawnCLIOptions): ChildProcess {
 
   log.info({ claudePath, argsCount: args.length, attemptId }, 'Spawning CLI process');
 
+  // Strip SDK-specific env vars so CLI uses its own auth and model config, not the custom endpoint
+  const { ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL,
+    ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL,
+    ...cleanEnv } = process.env;
+
   return spawn(claudePath, args, {
     cwd: normalizedProjectPath,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
-      ...process.env,
+      ...cleanEnv,
       FORCE_COLOR: '0',
       NO_COLOR: '1',
       TERM: 'dumb',

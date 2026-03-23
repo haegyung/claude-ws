@@ -100,6 +100,29 @@ export function trackWorkflowFromMessage(
             .map(c => c.text || '').join('');
         }
 
+        // Register actual taskId from TaskCreate results (toolUseId → numeric taskId mapping)
+        {
+          const workflow = workflowTracker.getWorkflow(attemptId);
+          if (workflow) {
+            const isTaskCreate = workflow.tasks.some((t) => t.id === block.tool_use_id);
+            if (isTaskCreate && resultContent) {
+              try {
+                const parsed = JSON.parse(resultContent);
+                if (parsed.taskId) {
+                  workflowTracker.registerTaskId(attemptId, block.tool_use_id!, String(parsed.taskId));
+                }
+              } catch {
+                // Text format: "Task #5 created successfully: ..."
+                const match = resultContent.match(/Task\s*#(\d+)/i) ||
+                              resultContent.match(/taskId["\s:]+(\d+)/);
+                if (match) {
+                  workflowTracker.registerTaskId(attemptId, block.tool_use_id!, match[1]);
+                }
+              }
+            }
+          }
+        }
+
         // Extract the meaningful agent output from result, stripping SDK boilerplate
         let cleanResult = resultContent;
         const agentIdIdx = resultContent.indexOf('agentId:');

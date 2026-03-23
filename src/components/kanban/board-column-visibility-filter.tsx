@@ -21,8 +21,7 @@ export function BoardColumnVisibilityFilter({ hiddenColumns, onToggleColumn }: B
   const t = useTranslations('kanban');
 
   return (
-    <div className="flex justify-end px-4 pt-2 pb-1">
-      <DropdownMenu>
+    <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-accent transition-colors">
             <Columns3 className="h-3.5 w-3.5" />
@@ -42,7 +41,6 @@ export function BoardColumnVisibilityFilter({ hiddenColumns, onToggleColumn }: B
             </DropdownMenuCheckboxItem>
           ))}
         </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+    </DropdownMenu>
   );
 }

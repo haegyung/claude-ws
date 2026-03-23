@@ -16,6 +16,9 @@ interface RenderContentBlockOptions {
   onOpenQuestion?: () => void;
 }
 
+// Task tool calls are rendered as a consolidated dashboard, not individual blocks
+const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']);
+
 /**
  * Renders a single content block (text, thinking, or tool_use) from an assistant message.
  */
@@ -41,6 +44,9 @@ export function renderContentBlock({
   }
 
   if (block.type === 'tool_use') {
+    // Skip task tools — shown in TrackedTasksBlock dashboard instead
+    if (TASK_TOOL_NAMES.has(block.name || '')) return null;
+
     const toolId = block.id || '';
     const toolResult = toolResultsMap.get(toolId);
     const executing = isToolExecuting(toolId, lastToolUseId, toolResultsMap, isStreaming);
@@ -93,6 +99,9 @@ export function renderMessage({
   }
 
   if (output.type === 'tool_use') {
+    // Skip task tools — shown in TrackedTasksBlock dashboard instead
+    if (TASK_TOOL_NAMES.has(output.tool_name || '')) return null;
+
     const toolId = output.id || '';
     const toolResult = toolResultsMap.get(toolId);
     const isExecuting = isToolExecuting(toolId, lastToolUseId, toolResultsMap, isStreaming);

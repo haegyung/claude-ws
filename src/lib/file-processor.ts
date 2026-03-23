@@ -56,11 +56,12 @@ export async function processAttachments(
       // Pattern: {tempId}-{timestamp}.{ext}
       const originalName = extractOriginalName(tempFile, ext);
 
-      // Insert DB record
+      // Insert DB record - store path relative to uploadsDir including attemptId subdirectory
+      const storedFilename = `${attemptId}/${newFilename}`;
       await db.insert(schema.attemptFiles).values({
         id: fileId,
         attemptId,
-        filename: newFilename,
+        filename: storedFilename,
         originalName,
         mimeType,
         size: stats.size,

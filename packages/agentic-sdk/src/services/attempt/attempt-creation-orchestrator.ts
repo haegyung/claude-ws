@@ -20,6 +20,7 @@ export interface AttemptCreationInput {
   output_schema?: string;
   timeout?: number;
   model?: string;
+  provider?: 'claude-cli' | 'claude-sdk';
 }
 
 /** Transport-agnostic result — routes map this to their framework's response */
@@ -43,6 +44,7 @@ export interface AgentStartParams {
   projectPath: string;
   prompt: string;
   model?: string;
+  provider?: 'claude-cli' | 'claude-sdk';
   sessionOptions?: Record<string, any>;
   outputFormat?: string;
   outputSchema?: string;
@@ -78,7 +80,7 @@ export function createAttemptOrchestrator(deps: OrchestratorDeps) {
      */
     async createAndRun(input: AttemptCreationInput): Promise<AttemptResult> {
      try {
-      const { request_method = 'queue', output_format, output_schema, timeout = 300000, model } = input;
+      const { request_method = 'queue', output_format, output_schema, timeout = 300000, model, provider } = input;
 
       // Validate
       this.validate(input);
@@ -121,6 +123,7 @@ export function createAttemptOrchestrator(deps: OrchestratorDeps) {
         projectPath: project.path,
         prompt: finalPrompt,
         model: model || undefined,
+        provider: provider || undefined,
         sessionOptions: Object.keys(sessionOptions).length > 0 ? sessionOptions : undefined,
         outputFormat: output_format || undefined,
         outputSchema: output_schema || undefined,

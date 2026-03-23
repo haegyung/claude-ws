@@ -25,16 +25,17 @@ export async function GET(request: NextRequest, { params }: CommandParams) {
   }
 }
 
-// POST /api/commands/[name] - Get command info (with optional projectPath in body)
+// POST /api/commands/[name] - Process command with $ARGUMENTS substitution, return expanded prompt
 export async function POST(request: NextRequest, { params }: CommandParams) {
   try {
     const { name } = await params;
     const body = await request.json();
-    const { projectPath } = body;
+    const { arguments: args, subcommand } = body;
 
-    const result = commandService.getById(name, projectPath || undefined);
-    if (!result) {
-      return NextResponse.json({ error: 'Command not found' }, { status: 404 });
+    const result = commandService.processPrompt(name, args, subcommand);
+    if ('code' in result) {
+      const status = result.code === 'FORBIDDEN' ? 403 : 404;
+      return NextResponse.json({ error: result.code === 'FORBIDDEN' ? 'Invalid command path' : 'Command not found' }, { status });
     }
 
     return NextResponse.json(result);

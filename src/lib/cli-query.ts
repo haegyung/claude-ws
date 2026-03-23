@@ -26,21 +26,16 @@ export function findClaudePath(): string | undefined {
   const isWindows = process.platform === 'win32';
   const home = process.env.USERPROFILE || process.env.HOME || '';
 
-  // Local SDK cli.js (works as executable via shebang)
-  const sdkCli = join(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js');
-
   const candidates = isWindows
     ? [
         join(home, '.local', 'bin', 'claude.exe'),
         join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
         join(home, 'AppData', 'Local', 'Programs', 'claude', 'claude.exe'),
-        sdkCli,
       ]
     : [
         `/home/${process.env.USER || 'user'}/.local/bin/claude`,
         '/usr/local/bin/claude',
         '/opt/homebrew/bin/claude',
-        sdkCli,
       ];
 
   const found = candidates.find(p => existsSync(p));
@@ -65,6 +60,8 @@ export interface CliQueryOptions {
   onDelta?: (text: string) => void;
   signal?: AbortSignal;
   maxTurns?: number;
+  noTools?: boolean; // Disable all tools
+  lite?: boolean; // Skip MCP servers and session persistence for faster startup
 }
 
 export interface CliQueryResult {
@@ -77,7 +74,7 @@ export interface CliQueryResult {
  * Spawns `claude -p <prompt>` with stream-json output and accumulates the response.
  */
 export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult> {
-  const { prompt, cwd, model, onDelta, signal, maxTurns } = options;
+  const { prompt, cwd, model, onDelta, signal, maxTurns, noTools, lite } = options;
 
   const claudePath = findClaudePath();
   if (!claudePath) {
@@ -97,6 +94,14 @@ export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult
 
   if (maxTurns) {
     args.push('--max-turns', String(maxTurns));
+  }
+
+  if (noTools) {
+    args.push('--tools', '');
+  }
+
+  if (lite) {
+    args.push('--mcp-config', '{"mcpServers":{}}', '--strict-mcp-config', '--no-session-persistence');
   }
 
   return new Promise<CliQueryResult>((resolve, reject) => {

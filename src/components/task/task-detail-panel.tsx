@@ -13,6 +13,7 @@ import { useTaskAttemptStreamHandler } from './use-task-attempt-stream-handler';
 import { useResizable } from '@/hooks/use-resizable';
 import { useShellStore } from '@/stores/shell-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useAttachmentStore } from '@/stores/attachment-store';
 import { useProjectStore } from '@/stores/project-store';
 import { usePanelLayoutStore, PANEL_CONFIGS } from '@/stores/panel-layout-store';
 import { useFloatingWindowsStore } from '@/stores/floating-windows-store';
@@ -65,12 +66,25 @@ export function TaskDetailPanel({ className }: TaskDetailPanelProps) {
       taskStatus: selectedTask?.status ?? 'todo',
       taskChatInit: selectedTask?.chatInit ?? false,
       taskLastModel: selectedTask?.lastModel,
+      taskLastProvider: selectedTask?.lastProvider,
       taskDescription: selectedTask?.description,
       pendingAutoStartTask,
       pendingAutoStartPrompt,
       pendingAutoStartFileIds,
     }
   );
+
+  // Restore pending file attachments from DB when task has pendingFileIds
+  // Only restore if task hasn't started yet (chatInit=false) to avoid re-inserting files on reopen
+  const { restoreFromDb } = useAttachmentStore();
+  useEffect(() => {
+    if (selectedTask?.pendingFileIds && !selectedTask.chatInit) {
+      try {
+        const ids = JSON.parse(selectedTask.pendingFileIds) as string[];
+        if (ids.length > 0) restoreFromDb(selectedTask.id, ids);
+      } catch { /* ignore */ }
+    }
+  }, [selectedTask?.id, selectedTask?.pendingFileIds, selectedTask?.chatInit, restoreFromDb]);
 
   // Close status dropdown on outside click
   useEffect(() => {
@@ -183,6 +197,7 @@ export function TaskDetailPanel({ className }: TaskDetailPanelProps) {
               key={`${selectedTask.id}-${hasSentFirstMessage ? 'sent' : 'initial'}`} ref={promptInputRef}
               onSubmit={handlePromptSubmit} onCancel={cancelAttempt} onInterruptAndSend={handleInterruptAndSend}
               isStreaming={isRunning} taskId={selectedTask.id} taskLastModel={selectedTask.lastModel}
+              taskLastProvider={selectedTask.lastProvider}
               projectPath={currentProjectPath}
               initialValue={!hasSentFirstMessage && !selectedTask.chatInit && !pendingAutoStartTask && selectedTask.description ? selectedTask.description : undefined}
             />

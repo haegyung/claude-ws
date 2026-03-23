@@ -10,6 +10,7 @@ export interface Model {
   description?: string;
   tier: 'opus' | 'sonnet' | 'haiku';
   group?: string;
+  provider?: 'claude-cli' | 'claude-sdk';
 }
 
 export const AVAILABLE_MODELS: Model[] = [
@@ -19,6 +20,7 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Most capable model',
     tier: 'opus',
     group: 'Claude Code CLI',
+    provider: 'claude-cli',
   },
   {
     id: 'claude-sonnet-4-6',
@@ -26,6 +28,7 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Latest Sonnet model',
     tier: 'sonnet',
     group: 'Claude Code CLI',
+    provider: 'claude-cli',
   },
   {
     id: 'claude-haiku-4-5-20251001',
@@ -33,6 +36,7 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Fastest model',
     tier: 'haiku',
     group: 'Claude Code CLI',
+    provider: 'claude-cli',
   },
 ];
 
@@ -51,7 +55,7 @@ export function isValidModelId(id: string): boolean {
  * Convert model ID to human-readable display name dynamically.
  * Examples:
  *   claude-opus-4-5-20251101  -> Claude Opus 4.5
- *   my-custom-model-1-0       -> My Custom Model 1.0
+ *   my-custom-model-1-0       -> My Custom Models 1.0
  */
 export function modelIdToDisplayName(id: string): string {
   const known = getModelById(id);

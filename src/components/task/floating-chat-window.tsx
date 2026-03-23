@@ -13,6 +13,7 @@ import { TaskStatusBadgeDropdown } from './task-status-badge-dropdown';
 import { useTaskAttemptStreamHandler } from './use-task-attempt-stream-handler';
 import { useShellStore } from '@/stores/shell-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useAttachmentStore } from '@/stores/attachment-store';
 import { useProjectStore } from '@/stores/project-store';
 import { DetachableWindow } from '@/components/ui/detachable-window';
 import { useIsMobileViewport } from '@/hooks/use-mobile-viewport';
@@ -48,12 +49,25 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
       taskStatus: task.status,
       taskChatInit: task.chatInit,
       taskLastModel: task.lastModel,
+      taskLastProvider: task.lastProvider,
       taskDescription: task.description,
       pendingAutoStartTask,
       pendingAutoStartPrompt,
       pendingAutoStartFileIds,
     }
   );
+
+  // Restore pending file attachments from DB when task has pendingFileIds
+  // Only restore if task hasn't started yet (chatInit=false) to avoid re-inserting files on reopen
+  const { restoreFromDb } = useAttachmentStore();
+  useEffect(() => {
+    if (task.pendingFileIds && !task.chatInit) {
+      try {
+        const ids = JSON.parse(task.pendingFileIds) as string[];
+        if (ids.length > 0) restoreFromDb(task.id, ids);
+      } catch { /* ignore */ }
+    }
+  }, [task.id, task.pendingFileIds, task.chatInit, restoreFromDb]);
 
   const currentProjectId = activeProjectId || selectedProjectIds[0] || task.projectId;
   const currentProjectPath = currentProjectId ? projects.find(p => p.id === currentProjectId)?.path : undefined;
@@ -94,6 +108,7 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
               isStreaming={isRunning}
               taskId={task.id}
               taskLastModel={task.lastModel}
+              taskLastProvider={task.lastProvider}
               projectPath={currentProjectPath}
               initialValue={!hasSentFirstMessage && !task.chatInit && task.description ? task.description : undefined}
             />

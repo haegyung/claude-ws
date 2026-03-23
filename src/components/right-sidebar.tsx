@@ -2,13 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
-import { Plus, Settings, Package, X, Sun, Moon, LogOut, Globe, Brain } from 'lucide-react';
+import { Plus, Settings, Package, X, Sun, Moon, LogOut, Globe, Brain, Columns3, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRightSidebarStore } from '@/stores/right-sidebar-store';
 import { useAgentFactoryUIStore } from '@/stores/agent-factory-ui-store';
 import { useSettingsUIStore } from '@/stores/settings-ui-store';
 import { useTunnelStore } from '@/stores/tunnel-store';
+import { AutopilotToggle } from '@/components/kanban/autopilot-toggle';
+import { useProjectStore } from '@/stores/project-store';
+import { usePanelLayoutStore } from '@/stores/panel-layout-store';
+import { KANBAN_COLUMNS } from '@/types';
 import { LanguageSwitcher } from '@/components/ui/language-switcher';
 import { clearStoredApiKey } from '@/components/auth/api-key-dialog';
 import { dispatchAgentProviderConfig } from '@/components/auth/agent-provider-dialog';
@@ -36,13 +40,19 @@ interface RightSidebarProps {
 
 export function RightSidebar({ projectId, onCreateTask, className }: RightSidebarProps) {
   const t = useTranslations('common');
+  const tKanban = useTranslations('kanban');
+
   const { isOpen, closeRightSidebar } = useRightSidebarStore();
   const { setOpen: setAgentFactoryOpen } = useAgentFactoryUIStore();
   const { setOpen: setSettingsOpen } = useSettingsUIStore();
   const { setWizardOpen, status } = useTunnelStore();
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const { activeProjectId, selectedProjectIds } = useProjectStore();
+  const autopilotProjectId = activeProjectId || (selectedProjectIds.length === 1 ? selectedProjectIds[0] : null);
+  const { hiddenColumns, toggleColumn } = usePanelLayoutStore();
   const [mounted, setMounted] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showToggleColumns, setShowToggleColumns] = useState(false);
 
   // Prevent hydration mismatch
   useEffect(() => {
@@ -123,6 +133,11 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
           </div>
         </div>
 
+        {/* Autopilot mode selector */}
+        {autopilotProjectId && <AutopilotToggle />}
+
+        <div className="border-t my-1" />
+
         {/* Action buttons */}
         <Button
           onClick={() => {
@@ -174,6 +189,50 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
           </Button>
         </div>
 
+        {/* Toggle Columns - expandable menu between Agent Provider and Access Anywhere */}
+        <div className="pl-6">
+          <Button
+            variant="outline"
+            onClick={() => setShowToggleColumns(!showToggleColumns)}
+            className="w-full justify-start gap-2"
+          >
+            <Columns3 className="h-4 w-4" />
+            <span className="flex-1 text-left">{tKanban('toggleColumns')}</span>
+            {showToggleColumns ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </Button>
+          {showToggleColumns && (
+            <div className="mt-1 flex flex-col gap-1 pl-4">
+              {KANBAN_COLUMNS.map((col) => {
+                const isVisible = !hiddenColumns.includes(col.id);
+                return (
+                  <button
+                    key={col.id}
+                    onClick={() => toggleColumn(col.id)}
+                    className={cn(
+                      'flex items-center gap-2 px-2 py-1.5 text-xs rounded-md transition-colors text-left',
+                      isVisible
+                        ? 'text-foreground hover:bg-accent'
+                        : 'text-muted-foreground hover:bg-muted/50'
+                    )}
+                  >
+                    <span className={cn(
+                      'h-3 w-3 rounded-sm border flex items-center justify-center shrink-0',
+                      isVisible ? 'bg-primary border-primary' : 'border-muted-foreground/40'
+                    )}>
+                      {isVisible && <span className="text-primary-foreground text-[10px] leading-none">✓</span>}
+                    </span>
+                    {tKanban(col.titleKey)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Access Anywhere - submenu item under Settings */}
         <div className="pl-6">
           <Button
@@ -215,6 +274,7 @@ export function RightSidebar({ projectId, onCreateTask, className }: RightSideba
             {t('logout')}
           </Button>
         </div>
+
       </div>
 
       {/* Logout Confirmation Dialog */}

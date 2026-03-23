@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { ClaudeOutput, WsAttemptFinished } from '@/types';
 import { useRunningTasksStore } from '@/stores/running-tasks-store';
@@ -40,6 +40,11 @@ export function useAttemptSocket({
   setActiveQuestion,
 }: UseAttemptSocketOptions) {
   const { addRunningTask, removeRunningTask, markTaskCompleted } = useRunningTasksStore();
+
+  // Keep taskId in a ref so socket event handlers always see the current value
+  // (the socket useEffect has [] deps, so closure values would be stale)
+  const taskIdRef = useRef(taskId);
+  useEffect(() => { taskIdRef.current = taskId; }, [taskId]);
 
   // Initialize socket connection and register all event listeners
   useEffect(() => {
@@ -86,7 +91,7 @@ export function useAttemptSocket({
     });
 
     socketInstance.on('attempt:started', (data: { attemptId: string; taskId: string }) => {
-      if (data.taskId === taskId) {
+      if (data.taskId === taskIdRef.current) {
         currentTaskIdRef.current = data.taskId;
         currentAttemptIdRef.current = data.attemptId;
         setCurrentAttemptId(data.attemptId);

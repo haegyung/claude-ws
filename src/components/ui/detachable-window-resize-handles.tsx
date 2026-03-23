@@ -2,7 +2,12 @@
 
 export type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | null;
 
-const RESIZE_HANDLE_SIZE = 12;
+/** Visual triangle size in px */
+const CORNER_VISUAL_SIZE = 12;
+/** Hit area size for corner handles - larger for easier targeting */
+const CORNER_HIT_SIZE = 24;
+/** How far the hit area extends outside the window border */
+const CORNER_OUTSET = 8;
 
 interface ResizeHandlesProps {
   onResizeStart: (direction: ResizeDirection, e: React.MouseEvent) => void;
@@ -10,34 +15,41 @@ interface ResizeHandlesProps {
 
 interface CornerHandleConfig {
   direction: ResizeDirection;
-  position: string;
   cursor: string;
+  /** CSS to anchor the hit area flush to the corner */
+  hitStyle: React.CSSProperties;
+  /** CSS to position the visual triangle inside the hit area */
+  visualStyle: React.CSSProperties;
   gradient: string;
 }
 
 const CORNER_HANDLES: CornerHandleConfig[] = [
   {
     direction: 'nw',
-    position: 'top-0 left-0',
     cursor: 'cursor-nwse-resize',
+    hitStyle: { top: -CORNER_OUTSET, left: -CORNER_OUTSET },
+    visualStyle: { top: CORNER_OUTSET, left: CORNER_OUTSET },
     gradient: 'linear-gradient(135deg, hsl(var(--border)) 50%, transparent 50%)',
   },
   {
     direction: 'ne',
-    position: 'top-0 right-0',
     cursor: 'cursor-nesw-resize',
+    hitStyle: { top: -CORNER_OUTSET, right: -CORNER_OUTSET },
+    visualStyle: { top: CORNER_OUTSET, right: CORNER_OUTSET },
     gradient: 'linear-gradient(-135deg, hsl(var(--border)) 50%, transparent 50%)',
   },
   {
     direction: 'sw',
-    position: 'bottom-0 left-0',
     cursor: 'cursor-nesw-resize',
+    hitStyle: { bottom: -CORNER_OUTSET, left: -CORNER_OUTSET },
+    visualStyle: { bottom: CORNER_OUTSET, left: CORNER_OUTSET },
     gradient: 'linear-gradient(45deg, hsl(var(--border)) 50%, transparent 50%)',
   },
   {
     direction: 'se',
-    position: 'bottom-0 right-0',
     cursor: 'cursor-nwse-resize',
+    hitStyle: { bottom: -CORNER_OUTSET, right: -CORNER_OUTSET },
+    visualStyle: { bottom: CORNER_OUTSET, right: CORNER_OUTSET },
     gradient: 'linear-gradient(-45deg, hsl(var(--border)) 50%, transparent 50%)',
   },
 ];
@@ -80,18 +92,32 @@ const EDGE_HANDLES: EdgeHandleConfig[] = [
 export function DetachableWindowResizeHandles({ onResizeStart }: ResizeHandlesProps) {
   return (
     <>
-      {CORNER_HANDLES.map(({ direction, position, cursor, gradient }) => (
+      {/* Corner handles: large invisible hit area + small visual triangle */}
+      {CORNER_HANDLES.map(({ direction, cursor, hitStyle, visualStyle, gradient }) => (
         <div
           key={direction}
-          className={`absolute ${position} ${cursor} hover:opacity-100 opacity-50 transition-opacity`}
+          className={`absolute ${cursor} group/corner`}
           style={{
-            width: `${RESIZE_HANDLE_SIZE}px`,
-            height: `${RESIZE_HANDLE_SIZE}px`,
-            background: gradient,
+            ...hitStyle,
+            width: `${CORNER_HIT_SIZE}px`,
+            height: `${CORNER_HIT_SIZE}px`,
+            zIndex: 1,
           }}
           onMouseDown={(e) => onResizeStart(direction, e)}
-        />
+        >
+          {/* Visual triangle indicator - opacity controlled by parent hover */}
+          <div
+            className="absolute opacity-50 group-hover/corner:opacity-100 transition-opacity pointer-events-none"
+            style={{
+              ...visualStyle,
+              width: `${CORNER_VISUAL_SIZE}px`,
+              height: `${CORNER_VISUAL_SIZE}px`,
+              background: gradient,
+            }}
+          />
+        </div>
       ))}
+      {/* Edge handles */}
       {EDGE_HANDLES.map(({ direction, position, cursor, style }) => (
         <div
           key={direction}
