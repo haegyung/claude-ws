@@ -59,6 +59,13 @@ import type { AutopilotMode } from './src/lib/autopilot';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
 
+function isSqliteForeignKeyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const maybeError = error as { code?: string; message?: string };
+  return maybeError.code === 'SQLITE_CONSTRAINT_FOREIGNKEY'
+    || (typeof maybeError.message === 'string' && maybeError.message.includes('FOREIGN KEY constraint failed'));
+}
+
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = getHostname();
 const port = getPort();
@@ -72,6 +79,26 @@ app.prepare().then(async () => {
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url!, true);
     const pathname = parsedUrl.pathname || '';
+    const requestStartedAt = Date.now();
+    const shouldTraceRequest =
+      pathname.startsWith('/api/attempts')
+      || pathname.includes('/conversation')
+      || pathname.includes('/running-attempt')
+      || pathname.includes('/pending-question')
+      || pathname.includes('/agent-factory/projects/');
+
+    if (shouldTraceRequest) {
+      res.on('finish', () => {
+        const durationMs = Date.now() - requestStartedAt;
+        log.info({
+          method: req.method,
+          path: pathname,
+          statusCode: res.statusCode,
+          durationMs,
+          hasApiKey: Boolean(req.headers['x-api-key']),
+        }, '[Server] HTTP request traced');
+      });
+    }
 
     // API authentication check - read from process.env directly for immediate effect
     const apiAccessKey = process.env.API_ACCESS_KEY;
@@ -1036,11 +1063,19 @@ app.prepare().then(async () => {
 
     if (!isStreamingDelta) {
       // Save to database (only complete messages)
-      await db.insert(schema.attemptLogs).values({
-        attemptId,
-        type: 'json',
-        content: JSON.stringify(data),
-      });
+      try {
+        await db.insert(schema.attemptLogs).values({
+          attemptId,
+          type: 'json',
+          content: JSON.stringify(data),
+        });
+      } catch (error) {
+        if (isSqliteForeignKeyError(error)) {
+          log.warn({ attemptId }, '[Server] Skipping JSON log write because attempt no longer exists');
+        } else {
+          throw error;
+        }
+      }
     }
 
     // Check how many clients are in the room
@@ -1106,11 +1141,19 @@ app.prepare().then(async () => {
   });
 
   agentManager.on('stderr', async ({ attemptId, content }) => {
-    await db.insert(schema.attemptLogs).values({
-      attemptId,
-      type: 'stderr',
-      content,
-    });
+    try {
+      await db.insert(schema.attemptLogs).values({
+        attemptId,
+        type: 'stderr',
+        content,
+      });
+    } catch (error) {
+      if (isSqliteForeignKeyError(error)) {
+        log.warn({ attemptId }, '[Server] Skipping stderr log write because attempt no longer exists');
+      } else {
+        throw error;
+      }
+    }
 
     io.to(`attempt:${attemptId}`).emit('output:stderr', { attemptId, content });
   });
@@ -1382,6 +1425,7 @@ app.prepare().then(async () => {
 
   // Register exit event handler
   agentManager.on('exit', async ({ attemptId, code }) => {
+    try {
     // Get attempt to retrieve taskId and current status
     const attempt = await db.query.attempts.findFirst({
       where: eq(schema.attempts.id, attemptId),
@@ -1599,6 +1643,13 @@ app.prepare().then(async () => {
     usageTracker.clearSession(attemptId);
     workflowTracker.clearWorkflow(attemptId);
     gitStatsCache.clear(attemptId);
+    } catch (error) {
+      if (isSqliteForeignKeyError(error)) {
+        log.warn({ attemptId }, '[Server] Ignoring FK error in exit handler (attempt/task deleted)');
+      } else {
+        log.error({ attemptId, error }, '[Server] Exit handler failed');
+      }
+    }
   });
 
   // Forward tracking module events to Socket.io clients

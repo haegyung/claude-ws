@@ -41,6 +41,19 @@ export interface QueryOptionsBuilderParams {
   canUseToolCallback: CanUseToolCallback;
 }
 
+type SettingSource = 'user' | 'project' | 'local';
+
+function resolveSettingSources(): SettingSource[] {
+  const allowed = new Set<SettingSource>(['user', 'project', 'local']);
+  const raw = process.env.CLAUDE_SDK_SETTING_SOURCES;
+  if (!raw || raw.trim().length === 0) return ['project'];
+  const values = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value): value is SettingSource => allowed.has(value as SettingSource));
+  return values.length > 0 ? values : ['project'];
+}
+
 /**
  * Build the options object for SDK query(), minus prompt.
  */
@@ -74,6 +87,7 @@ export function buildQueryOptions(params: QueryOptionsBuilderParams) {
     ...(maxTurns ? { maxTurns } : {}),
     abortController: controller,
     canUseTool: canUseToolCallback,
+    settingSources: resolveSettingSources(),
     env: buildIsolatedSubprocessEnv(model),
   };
 
