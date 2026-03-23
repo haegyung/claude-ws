@@ -9,6 +9,12 @@ import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { query, type Query } from '@anthropic-ai/claude-agent-sdk';
+import { createRequire } from 'module';
+
+// Resolve cli.js path explicitly to work around pnpm nested node_modules layout
+// where the SDK's built-in dirname-based resolution fails
+const require_ = createRequire(import.meta.url);
+const CLAUDE_CLI_PATH = require_.resolve('@anthropic-ai/claude-agent-sdk/cli.js');
 import { adaptSDKMessage, isValidSDKMessage } from './claude-sdk-message-to-output-adapter';
 import type { SDKResultMessage } from './claude-sdk-message-to-output-adapter';
 import { createLogger } from '../lib/pino-logger';
@@ -215,6 +221,7 @@ export class AgentProvider extends EventEmitter {
         prompt,
         options: {
           ...queryOptions,
+          pathToClaudeCodeExecutable: CLAUDE_CLI_PATH,
           systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: '' },
           stderr: (data: string) => { log.error({ stderr: data.slice(0, 500), attemptId }, 'Claude stderr'); },
         },
