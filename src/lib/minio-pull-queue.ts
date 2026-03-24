@@ -257,15 +257,15 @@ async function readHookEnv(projectPath: string, fallbackProjectId: string): Prom
     map.set(key, value);
   }
 
-  const apiHookUrl = resolveApiHookUrl(map);
+  const projectId = map.get('PROJECT_ID')?.trim() || fallbackProjectId;
+  const apiHookUrl = resolveApiHookUrl(map, undefined, projectId);
   if (!apiHookUrl) {
-    throw new Error('Missing API_HOOK_URL in project hook .env and process env');
+    throw new Error('Missing API_HOOK_URL/API_HOOK_URL_DOMAIN in project hook .env and process env');
   }
   const apiHookApiKey = map.get('API_HOOK_API_KEY')?.trim()
     || process.env.API_HOOK_API_KEY?.trim()
     || '';
 
-  const projectId = map.get('PROJECT_ID')?.trim() || fallbackProjectId;
   return { apiHookUrl, apiHookApiKey, projectId };
 }
 
@@ -277,10 +277,11 @@ function buildApiHeaders(apiHookApiKey: string): Record<string, string> {
 async function fetchManifest(
   apiHookUrl: string,
   apiHookApiKey: string,
-  folder: string,
-  label: string
+  label: string,
+  options?: { root?: 'markdown' }
 ): Promise<ManifestEntry[]> {
-  const url = buildApiHookEndpoint(apiHookUrl, `manifest?folder=${encodeURIComponent(folder)}`);
+  const endpoint = options?.root ? `manifest?root=${options.root}` : 'manifest';
+  const url = buildApiHookEndpoint(apiHookUrl, endpoint);
   const response = await fetch(url, { headers: buildApiHeaders(apiHookApiKey) });
   if (!response.ok) {
     throw new Error(`Manifest API failed for ${label}: HTTP ${response.status} ${response.statusText}`);
@@ -362,12 +363,9 @@ async function fetchQueueCandidates(
   projectId: string,
   sqlite: Database.Database
 ): Promise<QueueFileCandidate[]> {
-  const targetPrefix = projectId;
-  const markdownPrefix = `markdown/${projectId}`;
-
   const [mainManifest, markdownManifest] = await Promise.all([
-    fetchManifest(apiHookUrl, apiHookApiKey, targetPrefix, 'main folder'),
-    fetchManifest(apiHookUrl, apiHookApiKey, markdownPrefix, 'markdown folder'),
+    fetchManifest(apiHookUrl, apiHookApiKey, 'main folder'),
+    fetchManifest(apiHookUrl, apiHookApiKey, 'markdown folder', { root: 'markdown' }),
   ]);
 
   const normalize = (entries: ManifestEntry[], folder: 'main' | 'markdown'): QueueFileCandidate[] => (
@@ -908,8 +906,8 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
           const manifestEntry = await fetchManifest(
             hookEnv.apiHookUrl,
             hookEnv.apiHookApiKey,
-            row.folder === 'main' ? hookEnv.projectId : `markdown/${hookEnv.projectId}`,
-            row.folder
+            row.folder,
+            row.folder === 'markdown' ? { root: 'markdown' } : undefined
           );
           const latest = manifestEntry.find((entry) => entry.key === row.fileKey);
           if (!latest) {

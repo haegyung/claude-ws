@@ -226,15 +226,15 @@ async function readHookEnv(projectPath: string, fallbackProjectId: string): Prom
     values.set(key, value);
   }
 
-  const apiHookUrl = resolveApiHookUrl(values);
+  const projectId = values.get('PROJECT_ID')?.trim() || fallbackProjectId;
+  const apiHookUrl = resolveApiHookUrl(values, undefined, projectId);
   if (!apiHookUrl) {
-    throw new Error('Missing API_HOOK_URL in project hook .env and process env');
+    throw new Error('Missing API_HOOK_URL/API_HOOK_URL_DOMAIN in project hook .env and process env');
   }
   const apiHookApiKey = values.get('API_HOOK_API_KEY')?.trim()
     || process.env.API_HOOK_API_KEY?.trim()
     || '';
 
-  const projectId = values.get('PROJECT_ID')?.trim() || fallbackProjectId;
   return { apiHookUrl, apiHookApiKey, projectId };
 }
 
@@ -339,12 +339,18 @@ async function requestWithoutJsonWithRetry(
   throw new Error(`${label} failed after ${REQUEST_MAX_RETRIES} attempts: ${lastError?.message || 'Unknown error'}`);
 }
 
-async function fetchManifest(apiHookUrl: string, apiHookApiKey: string, folder: string): Promise<ManifestEntry[]> {
-  const url = buildApiHookEndpoint(apiHookUrl, `manifest?folder=${encodeURIComponent(folder)}`);
+async function fetchManifest(
+  apiHookUrl: string,
+  apiHookApiKey: string,
+  label: string,
+  options?: { root?: 'markdown' },
+): Promise<ManifestEntry[]> {
+  const endpoint = options?.root ? `manifest?root=${options.root}` : 'manifest';
+  const url = buildApiHookEndpoint(apiHookUrl, endpoint);
   const payload = await requestJsonWithRetry(
     url,
     { method: 'GET', headers: buildApiHeaders(apiHookApiKey) },
-    `Manifest fetch (${folder})`
+    `Manifest fetch (${label})`
   ) as {
     status?: string;
     data?: unknown;
@@ -352,7 +358,7 @@ async function fetchManifest(apiHookUrl: string, apiHookApiKey: string, folder: 
   };
 
   if (payload.status !== 'success' || !Array.isArray(payload.data)) {
-    throw new Error(`Invalid manifest response for ${folder}: ${payload.message || 'Invalid payload'}`);
+    throw new Error(`Invalid manifest response for ${label}: ${payload.message || 'Invalid payload'}`);
   }
 
   return payload.data as ManifestEntry[];
@@ -581,10 +587,12 @@ function enqueueInDb(
 
 export async function enqueueProjectPushSync(projectPath: string, fallbackProjectId: string) {
   const hookEnv = await readHookEnv(projectPath, fallbackProjectId);
-  const [remoteManifest, localFiles] = await Promise.all([
-    fetchManifest(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, hookEnv.projectId),
+  const [mainManifest, markdownManifest, localFiles] = await Promise.all([
+    fetchManifest(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, 'main'),
+    fetchManifest(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, 'markdown', { root: 'markdown' }),
     scanLocalFiles(projectPath, hookEnv.projectId),
   ]);
+  const remoteManifest = [...mainManifest, ...markdownManifest];
 
   const candidates = buildQueueCandidates(hookEnv.projectId, localFiles, remoteManifest);
   const sqlite = await ensurePushQueueDb(projectPath);
@@ -705,7 +713,7 @@ async function uploadByPresignedUrl(url: string, localPath: string): Promise<voi
 
 async function deleteByApiEndpoint(apiHookUrl: string, apiHookApiKey: string, key: string): Promise<void> {
   const encodedKey = encodeURIComponent(key);
-  const deleteUrl = buildApiHookEndpoint(apiHookUrl, `delete?key=${encodedKey}`);
+  const deleteUrl = buildApiHookEndpoint(apiHookUrl, `by-path?key=${encodedKey}`);
   await requestWithoutJsonWithRetry(
     deleteUrl,
     { method: 'DELETE', headers: buildApiHeaders(apiHookApiKey) },

@@ -106,7 +106,7 @@ export async function setupProjectDefaults(projectPath: string, projectId?: stri
         try {
             await access(envPath);
         } catch {
-            const apiBase = resolveApiHookUrl();
+            const apiBase = resolveApiHookUrl(undefined, undefined, projectId);
             const apiHookApiKey = process.env.API_HOOK_API_KEY?.trim() || '';
             const projectIdEnvLine = projectId ? `PROJECT_ID="${projectId}"\n` : '';
             const apiKeyEnvLine = apiHookApiKey ? `API_HOOK_API_KEY="${apiHookApiKey}"\n` : '';

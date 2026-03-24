@@ -24,34 +24,44 @@ function readVar(key: string, hookEnvValues?: HookEnvMapLike): string {
   return '';
 }
 
-function shouldUseLocalByHost(hostname?: string): boolean {
-  const fromHost = (hostname || '').toLowerCase();
-  const fromEnvHost = (process.env.HOST || '').toLowerCase();
-  const appUrl = (process.env.API_BASE_URL || process.env.CORS_ORIGIN || '').toLowerCase();
-
-  const localMarkers = ['localhost', '127.0.0.1', '0.0.0.0'];
-  if (fromHost) {
-    return localMarkers.some((marker) => fromHost.includes(marker));
-  }
-
-  const hasLocalEnvHost = localMarkers.some((marker) => fromEnvHost.includes(marker) || appUrl.includes(marker));
-  if (hasLocalEnvHost) return true;
-
-  return process.env.NODE_ENV !== 'production';
+function hasRoomPlaceholder(value: string): boolean {
+  return /\{room_id\}|room_id/i.test(value);
 }
 
-export function resolveApiHookUrl(hookEnvValues?: HookEnvMapLike, hostname?: string): string {
-  const explicit = readVar('API_HOOK_URL', hookEnvValues);
-  if (explicit) return explicit;
-
-  const local = readVar('API_HOOK_URL_LOCAL', hookEnvValues);
-  const domain = readVar('API_HOOK_URL_DOMAIN', hookEnvValues);
-
-  if (shouldUseLocalByHost(hostname)) {
-    return local || domain;
+function resolveRoomTemplate(value: string, roomId?: string): string {
+  const trimmed = trimQuotes(value);
+  if (!hasRoomPlaceholder(trimmed)) {
+    return trimmed;
   }
 
-  return domain || local;
+  const normalizedRoomId = (roomId || '').trim();
+  if (!normalizedRoomId) {
+    return trimmed;
+  }
+
+  return trimmed
+    .replace(/\{room_id\}/gi, normalizedRoomId)
+    .replace(/room_id/gi, normalizedRoomId);
+}
+
+export function resolveApiHookUrl(hookEnvValues?: HookEnvMapLike, _hostname?: string, roomId?: string): string {
+  const resolvedRoomId = (roomId || readVar('PROJECT_ID', hookEnvValues)).trim();
+  const domainTemplate = readVar('API_HOOK_URL_DOMAIN', hookEnvValues);
+  if (domainTemplate) {
+    return resolveRoomTemplate(domainTemplate, resolvedRoomId);
+  }
+
+  const explicit = readVar('API_HOOK_URL', hookEnvValues);
+  if (explicit) {
+    return resolveRoomTemplate(explicit, resolvedRoomId);
+  }
+
+  const local = readVar('API_HOOK_URL_LOCAL', hookEnvValues);
+  if (local) {
+    return resolveRoomTemplate(local, resolvedRoomId);
+  }
+
+  return '';
 }
 
 /**
