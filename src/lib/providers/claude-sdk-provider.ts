@@ -101,11 +101,22 @@ export class ClaudeSDKProvider extends EventEmitter implements Provider {
         canUseToolCallback: this.makeCanUseTool(attemptId),
       });
 
+      const promptPreview = prompt.substring(0, 400) + (prompt.length > 400 ? '...' : '');
+      const shouldLogFullPrompt = process.env.SDK_LOG_FULL_PROMPT === '1';
+
       log.info({
+        attemptId,
         endpoint: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-        prompt: prompt.substring(0, 200) + (prompt.length > 200 ? '...' : ''),
-        model: opts.model, cwd: opts.cwd,
+        projectPath,
+        cwd: opts.cwd,
+        model: opts.model,
+        promptLength: prompt.length,
+        promptPreview,
       }, 'SDK Query starting');
+
+      if (shouldLogFullPrompt) {
+        log.info({ attemptId, projectPath, prompt }, 'SDK Query full prompt');
+      }
 
       const response = query({ prompt, options: opts });
       session.queryRef = response;

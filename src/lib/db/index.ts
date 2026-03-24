@@ -268,6 +268,17 @@ export function initDb() {
       // Column already exists
     }
   }
+
+  // Cleanup inconsistent legacy rows created while FK checks were disabled.
+  // Keeps runtime stable and avoids unexpected FK errors in later writes.
+  sqlite.exec(`
+    DELETE FROM checkpoints
+    WHERE task_id NOT IN (SELECT id FROM tasks)
+       OR attempt_id NOT IN (SELECT id FROM attempts);
+
+    DELETE FROM attempts
+    WHERE task_id NOT IN (SELECT id FROM tasks);
+  `);
 }
 
 // Initialize on first import

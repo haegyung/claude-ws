@@ -44,6 +44,9 @@
   ],
   "exclude": [
     "node_modules",
-    "docs/**/*.ts"
+    "docs/**/*.ts",
+    "data/projects/**/*.ts",
+    "data/projects/**/*.tsx",
+    "data/projects/**/*.mts"
   ]
 }

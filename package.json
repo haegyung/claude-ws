@@ -90,9 +90,11 @@
     "pm2-logs": "pm2 logs claudews",
     "pm2-monit": "pm2 monit",
     "build": "cross-env NODE_ENV=production next build",
-    "start": "cross-env NODE_ENV=production tsx server.ts",
+    "start": "pnpm projects:migrate:defaults && cross-env NODE_ENV=production tsx server.ts",
     "db:generate": "drizzle-kit generate",
     "db:fix": "tsx scripts/db-fix-columns.ts",
+    "db:migrate:health": "tsx scripts/db-migrate-health.ts",
+    "projects:migrate:defaults": "tsx scripts/migrate-existing-projects.ts",
     "migrate:sessions": "tsx scripts/migrate-sdk-sessions.ts"
   },
   "dependencies": {
@@ -162,7 +164,6 @@
     "diff": "^8.0.3",
     "dompurify": "^3.3.3",
     "dotenv": "^17.3.1",
-    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.1",
@@ -201,5 +202,9 @@
   "optionalDependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "@types/js-yaml": "^4.0.9"
   }
 }

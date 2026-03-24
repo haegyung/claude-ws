@@ -35,6 +35,12 @@ function createConcurrencyLimit(concurrency: number) {
 const config = {
     apiBaseUrl: process.env.API_HOOK_URL as string,
     apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
+    apiQueueUrl: (process.env.API_QUEUE_URL || process.env.CLAUDE_WS_API_BASE_URL || "").trim(),
+    apiQueueFallbackUrls: (process.env.API_QUEUE_FALLBACK_URLS || "").trim(),
+    apiQueueKey: (process.env.API_HOOK_KEY || process.env.API_ACCESS_KEY || "").trim(),
+    appPort: (process.env.PORT || "").trim(),
+    queueHost: (process.env.API_QUEUE_HOST || "localhost").trim(),
+    projectId: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
     targetPrefix: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
 };
 
@@ -61,6 +67,83 @@ function buildApiHeaders(baseHeaders: Record<string, string> = {}): HeadersInit 
         headers["x-api-key"] = config.apiHookApiKey;
     }
     return headers;
+}
+
+function toPushEndpoint(baseOrEndpoint: string): string {
+    const trimmed = String(baseOrEndpoint || "").trim().replace(/\/+$/g, "");
+    if (!trimmed) return "";
+    if (/\/api\/sync\/minio\/push$/i.test(trimmed)) return trimmed;
+    return `${trimmed}/api/sync/minio/push`;
+}
+
+function buildQueueCandidates(): string[] {
+    const candidates: string[] = [];
+    const push = (value: string) => {
+        const endpoint = toPushEndpoint(value);
+        if (endpoint && !candidates.includes(endpoint)) {
+            candidates.push(endpoint);
+        }
+    };
+
+    // Highest priority: explicit queue base URL
+    if (config.apiQueueUrl) {
+        push(config.apiQueueUrl);
+    }
+
+    // Default queue endpoint: localhost + PORT from environment
+    if (!config.apiQueueUrl && config.appPort) {
+        push(`http://${config.queueHost}:${config.appPort}`);
+    }
+
+    // Optional comma-separated list of extra queue base URLs/endpoints
+    if (config.apiQueueFallbackUrls) {
+        for (const raw of config.apiQueueFallbackUrls.split(",")) {
+            const value = raw.trim();
+            if (value) push(value);
+        }
+    }
+
+    // Last fallback: same origin as sync API base
+    try {
+        const origin = new URL(config.apiBaseUrl).origin;
+        push(origin);
+    } catch {
+        // ignore invalid URL
+    }
+
+    return candidates;
+}
+
+async function enqueuePushJob(): Promise<boolean> {
+    const endpoints = buildQueueCandidates();
+    if (endpoints.length === 0) return false;
+
+    for (const endpoint of endpoints) {
+        try {
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (config.apiQueueKey) {
+                headers["x-api-key"] = config.apiQueueKey;
+            }
+
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ projectId: config.projectId }),
+            });
+
+            if (response.ok) {
+                console.error(`✅ Queue accepted via ${endpoint}`);
+                return true;
+            }
+
+            console.error(`⚠️ Queue endpoint failed ${endpoint}: HTTP ${response.status}`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`⚠️ Queue endpoint unreachable ${endpoint}: ${message}`);
+        }
+    }
+
+    return false;
 }
 
 // Function to create tmp directory
@@ -138,6 +221,14 @@ async function scanDirectory(dir: string, fileList: string[] = []) {
 // MAIN SYNC FUNCTION
 // ==========================================
 async function runCheck() {
+    // Preferred path: enqueue into server-side push queue (records jobs in push-sync-state.db)
+    const enqueued = await enqueuePushJob();
+    if (enqueued) {
+        return;
+    }
+
+    console.error("⚠️ Queue enqueue failed on all endpoints, falling back to direct upload mode.");
+
     await ensureTmpDir(); // Create tmp directory before running
     console.error(`🔍 Starting to scan files in '${LOCAL_DATA_DIR}' and compare with '${STATE_FILE}'...`);
 

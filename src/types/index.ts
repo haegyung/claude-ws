@@ -14,6 +14,9 @@ export type RequestMethod = 'sync' | 'queue';
 export interface FormattedResponse {
   formatted_data: string;
   format: OutputFormat;
+  // Backward-compatible fields for clients expecting parsed messages/status.
+  messages?: ClaudeOutput[];
+  status?: AttemptStatus;
   attempt: {
     id: string;
     taskId: string;

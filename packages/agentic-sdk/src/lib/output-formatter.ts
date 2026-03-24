@@ -24,6 +24,8 @@ interface ClaudeOutput {
 interface FormattedResponse {
   formatted_data: string;
   format: string;
+  messages?: ClaudeOutput[];
+  status?: string;
   attempt: {
     id: string;
     taskId: string;
@@ -75,9 +77,21 @@ export function formatOutput(
         break;
     }
 
-    return { formatted_data: formattedData, format, attempt: { ...attemptMetadata, status: attemptMetadata.status as any } };
+    return {
+      formatted_data: formattedData,
+      format,
+      messages,
+      status: attemptMetadata.status as any,
+      attempt: { ...attemptMetadata, status: attemptMetadata.status as any }
+    };
   } catch {
-    return { formatted_data: toJson(messages), format: 'json', attempt: { ...attemptMetadata, status: attemptMetadata.status as any } };
+    return {
+      formatted_data: toJson(messages),
+      format: 'json',
+      messages,
+      status: attemptMetadata.status as any,
+      attempt: { ...attemptMetadata, status: attemptMetadata.status as any }
+    };
   }
 }
 

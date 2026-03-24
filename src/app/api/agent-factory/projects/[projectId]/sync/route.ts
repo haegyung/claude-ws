@@ -82,6 +82,14 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
+    log.info(
+      {
+        projectId,
+        projectPath: project.path,
+      },
+      'Resolved project path for sync'
+    );
+
     let parsedBody: unknown = {};
     try {
       parsedBody = await request.json();
@@ -95,6 +103,7 @@ export async function POST(
     log.info(
       {
         projectId,
+        projectPath: project.path,
         body,
         componentIds,
         agentSetIds,
@@ -106,11 +115,38 @@ export async function POST(
       await upsertProjectSettings(project.path, componentIds, agentSetIds);
     }
 
+    log.info(
+      {
+        projectId,
+        projectPath: project.path,
+      },
+      'Starting AgentFactory project sync'
+    );
+
     const result = await agentFactoryService.syncProject(projectId, project.path);
 
     if (!result.success && result.error) {
+      log.warn(
+        {
+          projectId,
+          projectPath: project.path,
+          error: result.error,
+        },
+        'AgentFactory project sync failed'
+      );
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
+
+    log.info(
+      {
+        projectId,
+        projectPath: project.path,
+        installedCount: result.installed?.length ?? 0,
+        skippedCount: result.skipped?.length ?? 0,
+        errorCount: result.errors?.length ?? 0,
+      },
+      'AgentFactory project sync completed'
+    );
 
     return NextResponse.json({
       success: true,

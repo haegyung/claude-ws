@@ -52,6 +52,8 @@ export function formatOutput(
     return {
       formatted_data: formattedData,
       format,
+      messages,
+      status: attemptMetadata.status as any,
       attempt: {
         id: attemptMetadata.id,
         taskId: attemptMetadata.taskId,
@@ -66,6 +68,8 @@ export function formatOutput(
     return {
       formatted_data: toJson(messages),
       format: 'json',
+      messages,
+      status: attemptMetadata.status as any,
       attempt: {
         id: attemptMetadata.id,
         taskId: attemptMetadata.taskId,

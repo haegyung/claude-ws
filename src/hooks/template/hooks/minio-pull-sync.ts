@@ -20,6 +20,8 @@ if (!config.apiBaseUrl) {
 }
 
 const PULL_DB_PATH = path.join(hooksDir, "pull-sync-state.db");
+const TMP_DIR = path.join(process.cwd(), ".claude", "tmp");
+const PUSH_STATE_FILE = path.join(TMP_DIR, "local-sync-state.json");
 
 function buildApiUrl(endpoint: string): string {
   const base = String(config.apiBaseUrl || "").replace(/\/+$/g, "");
@@ -111,11 +113,16 @@ async function ensurePullDb(): Promise<Database.Database> {
   return sqlite;
 }
 
-async function fetchManifest(folder: string, label: string): Promise<ManifestEntry[]> {
+async function fetchManifest(folder: string, label: string, allowNotFound = false): Promise<ManifestEntry[]> {
   console.error(`🔍 Calling API to get manifest for '${label}' (${folder})...`);
 
   const url = buildApiUrl(`manifest?folder=${encodeURIComponent(folder)}`);
   const response = await fetch(url, { headers: buildApiHeaders() });
+
+  if (response.status === 404 && allowNotFound) {
+    console.error(`ℹ️ ${label} not found on remote, treating as empty manifest.`);
+    return [];
+  }
 
   if (!response.ok) {
     throw new Error(`API manifest failed for ${label}: HTTP ${response.status} ${response.statusText}`);
@@ -132,13 +139,13 @@ async function fetchManifest(folder: string, label: string): Promise<ManifestEnt
   return objects;
 }
 
-async function getQueueCandidates(): Promise<QueueFileCandidate[]> {
+async function getQueueCandidates(): Promise<{ candidates: QueueFileCandidate[]; manifestData: ManifestEntry[] }> {
   const mainPrefix = config.projectId;
   const markdownPrefix = `markdown/${config.projectId}`;
 
   const [mainManifest, markdownManifest] = await Promise.all([
     fetchManifest(mainPrefix, "main folder"),
-    fetchManifest(markdownPrefix, "markdown folder"),
+    fetchManifest(markdownPrefix, "markdown folder", true),
   ]);
 
   const normalize = (entries: ManifestEntry[], folder: FolderType): QueueFileCandidate[] => (
@@ -152,7 +159,15 @@ async function getQueueCandidates(): Promise<QueueFileCandidate[]> {
     }))
   );
 
-  return [...normalize(mainManifest, "main"), ...normalize(markdownManifest, "markdown")];
+  return {
+    candidates: [...normalize(mainManifest, "main"), ...normalize(markdownManifest, "markdown")],
+    manifestData: [...mainManifest, ...markdownManifest],
+  };
+}
+
+async function writePushStateFile(manifestData: ManifestEntry[]): Promise<void> {
+  await fs.mkdir(TMP_DIR, { recursive: true });
+  await fs.writeFile(PUSH_STATE_FILE, JSON.stringify(manifestData, null, 2), "utf-8");
 }
 
 function enqueueCandidates(
@@ -249,12 +264,14 @@ async function runEnqueue() {
   let sqlite: Database.Database | null = null;
   try {
     console.error("\n=================== ENQUEUE MINIO PULL JOB ===================");
-    const candidates = await getQueueCandidates();
+    const { candidates, manifestData } = await getQueueCandidates();
+    await writePushStateFile(manifestData);
 
     sqlite = await ensurePullDb();
     const result = enqueueCandidates(sqlite, candidates);
 
     console.error(`✅ Queue DB: ${PULL_DB_PATH}`);
+    console.error(`✅ Push state file: ${PUSH_STATE_FILE}`);
     console.error(`🧾 Job ID: ${result.jobId}`);
     console.error(`📊 Total: ${result.totalFiles} | Enqueued: ${result.enqueuedFiles} | Skipped: ${result.skippedFiles}`);
     console.error(`📌 Job status: ${result.status}`);
