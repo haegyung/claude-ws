@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'projectId is required' }, { status: 400 });
     }
 
-    const apiHookUrl = resolveApiHookUrl(undefined, request.nextUrl.hostname);
+    const apiHookUrl = resolveApiHookUrl(undefined, request.nextUrl.hostname, projectId);
     if (!apiHookUrl) {
       return NextResponse.json({ error: 'API_HOOK_URL is not configured on server' }, { status: 500 });
     }

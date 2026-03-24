@@ -113,10 +113,12 @@ async function ensurePullDb(): Promise<Database.Database> {
   return sqlite;
 }
 
-async function fetchManifest(folder: string, label: string, allowNotFound = false): Promise<ManifestEntry[]> {
-  console.error(`🔍 Calling API to get manifest for '${label}' (${folder})...`);
+async function fetchManifest(label: string, options?: { root?: "markdown"; allowNotFound?: boolean }): Promise<ManifestEntry[]> {
+  const root = options?.root;
+  const allowNotFound = options?.allowNotFound || false;
+  console.error(`🔍 Calling API to get manifest for '${label}'${root ? ` (root=${root})` : ""}...`);
 
-  const url = buildApiUrl(`manifest?folder=${encodeURIComponent(folder)}`);
+  const url = root ? buildApiUrl(`manifest?root=${encodeURIComponent(root)}`) : buildApiUrl("manifest");
   const response = await fetch(url, { headers: buildApiHeaders() });
 
   if (response.status === 404 && allowNotFound) {
@@ -140,12 +142,9 @@ async function fetchManifest(folder: string, label: string, allowNotFound = fals
 }
 
 async function getQueueCandidates(): Promise<{ candidates: QueueFileCandidate[]; manifestData: ManifestEntry[] }> {
-  const mainPrefix = config.projectId;
-  const markdownPrefix = `markdown/${config.projectId}`;
-
   const [mainManifest, markdownManifest] = await Promise.all([
-    fetchManifest(mainPrefix, "main folder"),
-    fetchManifest(markdownPrefix, "markdown folder", true),
+    fetchManifest("main folder"),
+    fetchManifest("markdown folder", { root: "markdown", allowNotFound: true }),
   ]);
 
   const normalize = (entries: ManifestEntry[], folder: FolderType): QueueFileCandidate[] => (
