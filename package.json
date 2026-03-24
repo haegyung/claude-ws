@@ -1,6 +1,6 @@
 {
   "name": "claude-ws",
-  "version": "0.4.8",
+  "version": "0.4.9-beta.3",
   "private": false,
   "description": "AI-powered workspace for solo CEOs and indie builders — manage your entire business with AI agents, not just code. Kanban board, code editor, Git integration, claw agent hub, local-first SQLite.",
   "keywords": [
@@ -141,6 +141,7 @@
     "@tailwindcss/postcss": "^4.2.2",
     "@types/adm-zip": "^0.5.8",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/js-yaml": "^4.0.9",
     "@types/compression": "^1.8.1",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^20.19.37",
