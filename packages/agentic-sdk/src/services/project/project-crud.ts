@@ -101,7 +101,21 @@ export function createProjectService(db: any) {
       if (!data.name || !data.path) throw new ProjectValidationError('Name and path are required', 400);
       try {
         await this.setupProjectDirectory(data.path);
-        return await this.create(data);
+        const project = await this.create(data);
+
+        // Validate hook.env was created (for projects created via API)
+        // Note: setupProjectDefaults() is called separately in the API route
+        // This is just an additional safety check
+        const hookEnvPath = join(data.path, '.claude', 'hooks', 'hook.env');
+        try {
+          await access(hookEnvPath);
+        } catch {
+          // hook.env doesn't exist yet - this is OK if setupProjectDefaults hasn't been called
+          // The API route will call setupProjectDefaults separately
+          console.warn(`[project-crud] Project created but hook.env not yet created for ${project.id}. This is expected if setupProjectDefaults will be called separately.`);
+        }
+
+        return project;
       } catch (error: any) {
         if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
           throw new ProjectValidationError('A project with this path already exists', 409);

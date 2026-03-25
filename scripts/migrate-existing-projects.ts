@@ -5,8 +5,8 @@
  * What it does per project:
  * - Ensures `.claude/hooks` and `.claude/commands` exist
  * - Syncs hook templates (`minio-pull-sync.ts`, `minio-push-sync.ts`)
- * - Ensures `.claude/hooks/.env.example`, `.claude/settings.json`, `.claude/CLAUDE.md`
- * - Creates `.claude/hooks/.env` when missing
+ * - Ensures `.claude/hooks/hook.env.example`, `.claude/settings.json`, `.claude/CLAUDE.md`
+ * - Creates `.claude/hooks/hook.env` when missing
  *
  * Usage:
  *   pnpm projects:migrate:defaults
@@ -14,9 +14,10 @@
 
 import path from 'path';
 import fs from 'fs';
-import { config } from 'dotenv';
+import { config, parse as parseDotenv } from 'dotenv';
 import { db, schema } from '../src/lib/db';
 import { setupProjectDefaults } from '../src/lib/project-utils';
+import { resolveApiHookUrl } from '../src/lib/api-hook-url';
 
 type ProjectTarget = {
   id: string;
@@ -29,6 +30,89 @@ function inferProjectIdFromDirName(dirName: string): string {
   const firstDash = dirName.indexOf('-');
   if (firstDash <= 0) return dirName;
   return dirName.slice(0, firstDash);
+}
+
+function quoteEnvValue(value: string): string {
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+function getProjectIdFromHookEnv(projectPath: string): string | null {
+  const hooksDir = path.join(projectPath, '.claude', 'hooks');
+  const hookEnvPath = path.join(hooksDir, 'hook.env');
+  const legacyEnvPath = path.join(hooksDir, '.env');
+  const envPath = fs.existsSync(hookEnvPath) ? hookEnvPath : legacyEnvPath;
+  if (!fs.existsSync(envPath)) return null;
+
+  try {
+    const parsed = parseDotenv(fs.readFileSync(envPath, 'utf-8'));
+    const projectId = (parsed.PROJECT_ID || '').trim();
+    return projectId || null;
+  } catch {
+    return null;
+  }
+}
+
+function syncProjectHookEnv(projectPath: string, projectId: string): { updated: boolean; reason: string } {
+  const hooksDir = path.join(projectPath, '.claude', 'hooks');
+  const envPath = path.join(hooksDir, 'hook.env');
+  const legacyEnvPath = path.join(hooksDir, '.env');
+  fs.mkdirSync(hooksDir, { recursive: true });
+
+  let content = '';
+  if (fs.existsSync(envPath)) {
+    content = fs.readFileSync(envPath, 'utf-8');
+  } else if (fs.existsSync(legacyEnvPath)) {
+    content = fs.readFileSync(legacyEnvPath, 'utf-8');
+  }
+
+  const currentEnv = parseDotenv(content);
+  const envMap = new Map<string, string>(Object.entries(currentEnv));
+  const apiHookUrl = resolveApiHookUrl(envMap, undefined, projectId);
+  if (!apiHookUrl) {
+    throw new Error('Cannot resolve API_HOOK_URL. Set API_HOOK_URL/API_HOOK_URL_DOMAIN/API_HOOK_URL_LOCAL in root .env or project hook hook.env.');
+  }
+
+  const nextLineByKey: Record<string, string> = {
+    API_HOOK_URL: `API_HOOK_URL=${quoteEnvValue(apiHookUrl)}`,
+    PROJECT_ID: `PROJECT_ID=${quoteEnvValue(projectId)}`,
+  };
+
+  const apiHookApiKey = process.env.API_HOOK_API_KEY?.trim();
+  if (apiHookApiKey) {
+    nextLineByKey.API_HOOK_API_KEY = `API_HOOK_API_KEY=${quoteEnvValue(apiHookApiKey)}`;
+  }
+
+  const lines = content.length > 0 ? content.split(/\r?\n/) : [];
+  const replaced = new Set<string>();
+  const nextLines = lines.map((line) => {
+    for (const [key, nextLine] of Object.entries(nextLineByKey)) {
+      if (new RegExp(`^\\s*${key}\\s*=`).test(line)) {
+        replaced.add(key);
+        return nextLine;
+      }
+    }
+    return line;
+  });
+
+  for (const [key, nextLine] of Object.entries(nextLineByKey)) {
+    if (replaced.has(key)) continue;
+    if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== '') {
+      nextLines.push(nextLine);
+    } else if (nextLines.length === 0) {
+      nextLines.push(nextLine);
+    } else {
+      nextLines[nextLines.length - 1] = nextLine;
+    }
+  }
+
+  const normalized = `${nextLines.join('\n').replace(/\n*$/, '\n')}`;
+  if (normalized === content) {
+    return { updated: false, reason: 'already-correct' };
+  }
+
+  fs.writeFileSync(envPath, normalized, 'utf-8');
+  return { updated: true, reason: 'env-repaired' };
 }
 
 async function run(): Promise<void> {
@@ -61,8 +145,9 @@ async function run(): Promise<void> {
       if (!entry.isDirectory()) continue;
       const projectPath = path.resolve(path.join(projectsDir, entry.name));
       if (targets.has(projectPath)) continue;
+      const existingProjectId = getProjectIdFromHookEnv(projectPath);
       targets.set(projectPath, {
-        id: inferProjectIdFromDirName(entry.name),
+        id: existingProjectId || inferProjectIdFromDirName(entry.name),
         projectPath,
         source: 'scan',
       });
@@ -79,6 +164,7 @@ async function run(): Promise<void> {
   let ok = 0;
   let skipped = 0;
   let failed = 0;
+  let envRepaired = 0;
 
   for (const target of targets.values()) {
     try {
@@ -89,6 +175,8 @@ async function run(): Promise<void> {
       }
 
       await setupProjectDefaults(target.projectPath, target.id, workspaceRoot);
+      const envResult = syncProjectHookEnv(target.projectPath, target.id);
+      if (envResult.updated) envRepaired++;
       console.log(`[projects:migrate:defaults] OK ${target.source} id=${target.id} path=${target.projectPath}`);
       ok++;
     } catch (error) {
@@ -97,7 +185,7 @@ async function run(): Promise<void> {
     }
   }
 
-  console.log(`[projects:migrate:defaults] Done. ok=${ok} skipped=${skipped} failed=${failed}`);
+  console.log(`[projects:migrate:defaults] Done. ok=${ok} skipped=${skipped} failed=${failed} envRepaired=${envRepaired}`);
   if (failed > 0) process.exit(1);
 }
 

@@ -1,10 +1,58 @@
 import fs from "fs/promises";
 import path from "path";
 
-// Load .env from .claude/hooks/ directory
-import { config as dotenvConfig } from "dotenv";
-const hooksDir = path.join(process.cwd(), ".claude", "hooks");
-dotenvConfig({ path: path.join(hooksDir, ".env") });
+// Import centralized hook environment manager
+import {
+  ensureHookEnv,
+  readHookEnv,
+  validateHookEnv,
+  getHookEnvConfigFromServerEnv
+} from "@/lib/hook-env-manager";
+
+// ==========================================
+// Initialize Hook Environment
+// ==========================================
+
+async function initializeHookEnv() {
+  const projectPath = process.cwd();
+  const projectId = process.env.PROJECT_ID;
+
+  // Validate hook.env
+  const validation = await validateHookEnv(projectPath, ['API_HOOK_URL']);
+
+  if (!validation.exists) {
+    console.error(`⚠️  hook.env not found at ${validation.path}`);
+    console.error(`🔧 Auto-recreating from server configuration...`);
+
+    // Recreate from server .env
+    const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
+    await ensureHookEnv(projectPath, projectId, serverConfig);
+
+    console.error(`✅ hook.env recreated successfully`);
+  } else if (!validation.valid) {
+    console.error(`⚠️  hook.env is invalid: ${validation.missingVars.join(', ')}`);
+    console.error(`🔧 Auto-upgrading with missing variables...`);
+
+    // Upgrade with missing variables
+    const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
+    await ensureHookEnv(projectPath, projectId, serverConfig);
+
+    console.error(`✅ hook.env upgraded successfully`);
+  }
+
+  // Load the environment
+  const hookEnv = await readHookEnv(projectPath, projectId);
+
+  // Validate required variables
+  if (!hookEnv.apiHookUrl) {
+    console.error('❌ API_HOOK_URL is required but missing!');
+    console.error('💡 Check your server .env file has API_HOOK_URL configured');
+    console.error('💡 Example: API_HOOK_URL=https://api.example.com/api/sync');
+    process.exit(1);
+  }
+
+  return hookEnv;
+}
 
 /** Simple concurrency limiter — avoids p-limit dependency */
 function createConcurrencyLimit(concurrency: number) {
@@ -32,21 +80,36 @@ function createConcurrencyLimit(concurrency: number) {
 // ==========================================
 // CONFIGURATION
 // ==========================================
-const config = {
-    apiBaseUrl: process.env.API_HOOK_URL as string,
-    apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
-    apiQueueUrl: (process.env.API_QUEUE_URL || process.env.CLAUDE_WS_API_BASE_URL || "").trim(),
-    apiQueueFallbackUrls: (process.env.API_QUEUE_FALLBACK_URLS || "").trim(),
-    apiQueueKey: (process.env.API_HOOK_KEY || process.env.API_ACCESS_KEY || "").trim(),
-    appPort: (process.env.PORT || "").trim(),
-    queueHost: (process.env.API_QUEUE_HOST || "localhost").trim(),
-    projectId: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
-    targetPrefix: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
+let config: {
+    apiBaseUrl: string;
+    apiHookApiKey: string;
+    apiQueueUrl: string;
+    apiQueueKey: string;
+    appPort: string;
+    queueHost: string;
+    projectId: string;
+    targetPrefix: string;
 };
 
-if (!config.apiBaseUrl) {
-    console.error("❌ Missing API_HOOK_URL in .env!");
-    process.exit(1);
+function initializeRuntimeConfig(hookEnv: Awaited<ReturnType<typeof initializeHookEnv>>) {
+    const queuePort = (hookEnv.port || "").trim();
+    const apiQueueUrl = (queuePort ? `http://localhost:${queuePort}` : "").trim();
+
+    config = {
+        apiBaseUrl: hookEnv.apiHookUrl as string,
+        apiHookApiKey: (hookEnv.apiHookApiKey || "").trim(),
+        apiQueueUrl,
+        apiQueueKey: (hookEnv.apiAccessKey || "").trim(),
+        appPort: queuePort,
+        queueHost: (hookEnv.apiQueueHost || "localhost").trim(),
+        projectId: (hookEnv.projectId || "__PROJECT_ID__") as string,
+        targetPrefix: (hookEnv.projectId || "__PROJECT_ID__") as string,
+    };
+
+    if (!config.apiBaseUrl) {
+        console.error("❌ Missing API_HOOK_URL in hook.env!");
+        process.exit(1);
+    }
 }
 
 // Temporary directory configuration
@@ -93,14 +156,6 @@ function buildQueueCandidates(): string[] {
     // Default queue endpoint: localhost + PORT from environment
     if (!config.apiQueueUrl && config.appPort) {
         push(`http://${config.queueHost}:${config.appPort}`);
-    }
-
-    // Optional comma-separated list of extra queue base URLs/endpoints
-    if (config.apiQueueFallbackUrls) {
-        for (const raw of config.apiQueueFallbackUrls.split(",")) {
-            const value = raw.trim();
-            if (value) push(value);
-        }
     }
 
     // Last fallback: same origin as sync API base
@@ -221,6 +276,9 @@ async function scanDirectory(dir: string, fileList: string[] = []) {
 // MAIN SYNC FUNCTION
 // ==========================================
 async function runCheck() {
+    const hookEnv = await initializeHookEnv();
+    initializeRuntimeConfig(hookEnv);
+
     // Preferred path: enqueue into server-side push queue (records jobs in push-sync-state.db)
     const enqueued = await enqueuePushJob();
     if (enqueued) {

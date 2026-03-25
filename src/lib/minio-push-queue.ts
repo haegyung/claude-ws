@@ -210,32 +210,46 @@ async function openExistingPushQueueDb(projectPath: string): Promise<Database.Da
 }
 
 async function readHookEnv(projectPath: string, fallbackProjectId: string): Promise<HookEnv> {
-  const envPath = path.join(projectPath, '.claude', 'hooks', '.env');
-  const content = await fs.readFile(envPath, 'utf-8');
+  // Auto-migrate if .env exists but hook.env doesn't
+  const { migrateLegacyEnv, validateHookEnv, readHookEnv: readHookEnvFromFile, ensureHookEnv, getHookEnvConfigFromServerEnv } = await import('@/lib/hook-env-manager');
 
-  const values = new Map<string, string>();
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
+  const validation = await validateHookEnv(projectPath, ['API_HOOK_URL']);
 
-    const idx = line.indexOf('=');
-    if (idx <= 0) continue;
+  if (!validation.exists) {
+    console.error(`⚠️  Project ${projectPath} missing hook.env, auto-recreating...`);
 
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim().replace(/^"|"$/g, '');
-    values.set(key, value);
+    // Auto-recreate from server config
+    const serverConfig = await getHookEnvConfigFromServerEnv(fallbackProjectId);
+    await ensureHookEnv(projectPath, fallbackProjectId, serverConfig);
+
+    console.error(`✅ Recreated hook.env for ${projectPath}`);
+  } else if (!validation.valid) {
+    console.error(`⚠️  Project ${projectPath} has invalid hook.env, auto-upgrading...`);
+
+    // Auto-upgrade
+    const serverConfig = await getHookEnvConfigFromServerEnv(fallbackProjectId);
+    await ensureHookEnv(projectPath, fallbackProjectId, serverConfig);
+
+    console.error(`✅ Upgraded hook.env for ${projectPath}`);
   }
 
-  const projectId = values.get('PROJECT_ID')?.trim() || fallbackProjectId;
-  const apiHookUrl = resolveApiHookUrl(values, undefined, projectId);
+  // Read using centralized manager
+  const env = await readHookEnvFromFile(projectPath, fallbackProjectId);
+
+  // Resolve API hook URL
+  const apiHookUrl = env.apiHookUrl || '';
   if (!apiHookUrl) {
-    throw new Error('Missing API_HOOK_URL/API_HOOK_URL_DOMAIN in project hook .env and process env');
+    throw new Error(
+      'API_HOOK_URL not configured in hook.env or server .env. ' +
+      'Please check server configuration.'
+    );
   }
-  const apiHookApiKey = values.get('API_HOOK_API_KEY')?.trim()
-    || process.env.API_HOOK_API_KEY?.trim()
-    || '';
 
-  return { apiHookUrl, apiHookApiKey, projectId };
+  return {
+    apiHookUrl,
+    apiHookApiKey: env.apiHookApiKey || process.env.API_HOOK_API_KEY || '',
+    projectId: env.projectId || fallbackProjectId
+  };
 }
 
 function buildApiHeaders(apiHookApiKey: string, baseHeaders: Record<string, string> = {}): Record<string, string> {

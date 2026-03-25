@@ -1,24 +1,77 @@
 import fs from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { randomUUID } from "crypto";
 
-// Load .env from .claude/hooks/ directory
-import { config as dotenvConfig } from "dotenv";
-const hooksDir = path.join(process.cwd(), ".claude", "hooks");
-dotenvConfig({ path: path.join(hooksDir, ".env") });
+// Import centralized hook environment manager
+import {
+  ensureHookEnv,
+  readHookEnv,
+  validateHookEnv,
+  getHookEnvConfigFromServerEnv
+} from "@/lib/hook-env-manager";
 
-const config = {
-  apiBaseUrl: process.env.API_HOOK_URL as string,
-  apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
-  projectId: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
-};
+// ==========================================
+// Initialize Hook Environment
+// ==========================================
 
-if (!config.apiBaseUrl) {
-  console.error("❌ Missing API_HOOK_URL in .env!");
-  process.exit(1);
+async function initializeHookEnv() {
+  const projectPath = process.cwd();
+  const projectId = process.env.PROJECT_ID;
+
+  // Validate hook.env
+  const validation = await validateHookEnv(projectPath, ['API_HOOK_URL']);
+
+  if (!validation.exists) {
+    console.error(`⚠️  hook.env not found at ${validation.path}`);
+    console.error(`🔧 Auto-recreating from server configuration...`);
+
+    // Recreate from server .env
+    const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
+    await ensureHookEnv(projectPath, projectId, serverConfig);
+
+    console.error(`✅ hook.env recreated successfully`);
+  } else if (!validation.valid) {
+    console.error(`⚠️  hook.env is invalid: ${validation.missingVars.join(', ')}`);
+    console.error(`🔧 Auto-upgrading with missing variables...`);
+
+    // Upgrade with missing variables
+    const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
+    await ensureHookEnv(projectPath, projectId, serverConfig);
+
+    console.error(`✅ hook.env upgraded successfully`);
+  }
+
+  // Load the environment
+  const hookEnv = await readHookEnv(projectPath, projectId);
+
+  // Validate required variables
+  if (!hookEnv.apiHookUrl) {
+    console.error('❌ API_HOOK_URL is required but missing!');
+    console.error('💡 Check your server .env file has API_HOOK_URL configured');
+    console.error('💡 Example: API_HOOK_URL=https://api.example.com/api/sync');
+    process.exit(1);
+  }
+
+  return hookEnv;
 }
 
+let config: {
+  apiBaseUrl: string;
+  apiHookApiKey: string;
+  projectId: string;
+};
+
+function initializeRuntimeConfig(hookEnv: Awaited<ReturnType<typeof initializeHookEnv>>) {
+  config = {
+    apiBaseUrl: hookEnv.apiHookUrl as string,
+    apiHookApiKey: (hookEnv.apiHookApiKey || "").trim(),
+    projectId: (hookEnv.projectId || "__PROJECT_ID__") as string,
+  };
+}
+
+const hooksDir = path.join(process.cwd(), ".claude", "hooks");
 const PULL_DB_PATH = path.join(hooksDir, "pull-sync-state.db");
 const TMP_DIR = path.join(process.cwd(), ".claude", "tmp");
 const PUSH_STATE_FILE = path.join(TMP_DIR, "local-sync-state.json");
@@ -57,6 +110,19 @@ interface QueueFileCandidate {
 function buildFingerprint(entry: Pick<ManifestEntry, "size" | "lastModified" | "eTag">): string {
   const eTag = String(entry.eTag || "").trim();
   return eTag.length > 0 ? eTag : `${entry.size}:${entry.lastModified}`;
+}
+
+function getLocalPathFromKey(fileKey: string, folder: FolderType): string {
+  const mainPrefix = `${config.projectId}/`;
+  const markdownPrefix = `markdown/${config.projectId}/`;
+
+  if (folder === "main") {
+    const relative = fileKey.startsWith(mainPrefix) ? fileKey.slice(mainPrefix.length) : fileKey;
+    return path.join(process.cwd(), relative);
+  }
+
+  const markdownRelative = fileKey.startsWith(markdownPrefix) ? fileKey.slice(markdownPrefix.length) : fileKey;
+  return path.join(process.cwd(), "markdown", markdownRelative);
 }
 
 async function ensurePullDb(): Promise<Database.Database> {
@@ -224,17 +290,20 @@ function enqueueCandidates(
       }
 
       if (state?.status === "done" && state.fingerprint === candidate.fingerprint) {
-        skippedFiles += 1;
-        insertJobFileStmt.run(
-          jobId,
-          candidate.key,
-          candidate.folder,
-          candidate.fingerprint,
-          "skipped",
-          "Skipped: already done with same fingerprint",
-          now
-        );
-        continue;
+        const localPath = getLocalPathFromKey(candidate.key, candidate.folder);
+        if (existsSync(localPath)) {
+          skippedFiles += 1;
+          insertJobFileStmt.run(
+            jobId,
+            candidate.key,
+            candidate.folder,
+            candidate.fingerprint,
+            "skipped",
+            "Skipped: already done with same fingerprint",
+            now
+          );
+          continue;
+        }
       }
 
       enqueuedFiles += 1;
@@ -262,6 +331,9 @@ function enqueueCandidates(
 async function runEnqueue() {
   let sqlite: Database.Database | null = null;
   try {
+    const hookEnv = await initializeHookEnv();
+    initializeRuntimeConfig(hookEnv);
+
     console.error("\n=================== ENQUEUE MINIO PULL JOB ===================");
     const { candidates, manifestData } = await getQueueCandidates();
     await writePushStateFile(manifestData);

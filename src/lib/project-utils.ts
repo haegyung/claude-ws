@@ -83,12 +83,12 @@ export async function setupProjectDefaults(projectPath: string, projectId?: stri
             pushSyncContent = pushSyncContent.replace(/__PROJECT_ID__/g, resolvedProjectId);
             await writeFile(join(hooksDir, 'minio-push-sync.ts'), pushSyncContent, 'utf-8');
 
-            const envExamplePath = join(hooksDir, '.env.example');
+            const envExamplePath = join(hooksDir, 'hook.env.example');
             try {
                 await access(envExamplePath);
             } catch {
                 await copyFile(
-                    join(templateHooksDir, 'hooks', '.env.example'),
+                    join(templateHooksDir, 'hooks', 'hook.env.example'),
                     envExamplePath
                 );
             }
@@ -101,17 +101,17 @@ export async function setupProjectDefaults(projectPath: string, projectId?: stri
             console.error('[project-utils] Failed to copy hook templates for new project', e);
         }
 
-        // 3. Generate local .env file for the sync hooks in .claude/hooks/
-        const envPath = join(hooksDir, '.env');
+        // 3. Generate complete hook.env from server .env
         try {
-            await access(envPath);
-        } catch {
-            const apiBase = resolveApiHookUrl(undefined, undefined, projectId);
-            const apiHookApiKey = process.env.API_HOOK_API_KEY?.trim() || '';
-            const projectIdEnvLine = projectId ? `PROJECT_ID="${projectId}"\n` : '';
-            const apiKeyEnvLine = apiHookApiKey ? `API_HOOK_API_KEY="${apiHookApiKey}"\n` : '';
-            const envContent = `API_HOOK_URL="${apiBase}"\n${apiKeyEnvLine}${projectIdEnvLine}`;
-            await writeFile(envPath, envContent, 'utf-8');
+            const { ensureHookEnv, getHookEnvConfigFromServerEnv } = await import('./hook-env-manager');
+
+            // Get configuration from server environment
+            const hookEnvConfig = await getHookEnvConfigFromServerEnv(projectId);
+
+            // Ensure hook.env exists with complete configuration
+            await ensureHookEnv(projectPath, projectId, hookEnvConfig);
+        } catch (e) {
+            console.error('[project-utils] Failed to create hook.env for new project:', e);
         }
     } catch (e) {
         console.error('[project-utils] Error setting up project defaults:', e);

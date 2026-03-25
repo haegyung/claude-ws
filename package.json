@@ -95,7 +95,10 @@
     "db:fix": "tsx scripts/db-fix-columns.ts",
     "db:migrate:health": "tsx scripts/db-migrate-health.ts",
     "projects:migrate:defaults": "tsx scripts/migrate-existing-projects.ts",
-    "migrate:sessions": "tsx scripts/migrate-sdk-sessions.ts"
+    "migrate:sessions": "tsx scripts/migrate-sdk-sessions.ts",
+    "migrate-hook-env": "tsx scripts/migrate-hook-env.ts",
+    "migrate-all-projects": "tsx scripts/migrate-all-projects.ts",
+    "heal-hooks": "tsx scripts/heal-hook-env.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.81",
@@ -141,9 +144,9 @@
     "@tailwindcss/postcss": "^4.2.2",
     "@types/adm-zip": "^0.5.8",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/js-yaml": "^4.0.9",
     "@types/compression": "^1.8.1",
     "@types/dompurify": "^3.2.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.19.37",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -204,7 +207,8 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.10",
-    "@types/js-yaml": "^4.0.9"
+    "@tailwindcss/oxide-linux-x64-musl": "4.2.2",
+    "@types/js-yaml": "^4.0.9",
+    "drizzle-kit": "^0.31.10"
   }
 }

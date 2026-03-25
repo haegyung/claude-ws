@@ -309,6 +309,9 @@ importers:
         specifier: ^5.0.12
         version: 5.0.12(@types/react@19.2.14)(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
     devDependencies:
+      '@tailwindcss/oxide-linux-x64-musl':
+        specifier: 4.2.2
+        version: 4.2.2
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
@@ -7071,8 +7074,7 @@ snapshots:
   '@tailwindcss/oxide-linux-x64-gnu@4.2.2':
     optional: true
 
-  '@tailwindcss/oxide-linux-x64-musl@4.2.2':
-    optional: true
+  '@tailwindcss/oxide-linux-x64-musl@4.2.2': {}
 
   '@tailwindcss/oxide-wasm32-wasi@4.2.2':
     optional: true
