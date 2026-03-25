@@ -63,13 +63,15 @@ const BUILTIN_COMMANDS: CommandInfo[] = [
   { name: 'vim', description: 'Enter vim mode for multi-line input', isBuiltIn: true },
 ];
 
-function parseFrontmatter(content: string): { description?: string; argumentHint?: string } {
+function parseFrontmatter(content: string): { name?: string; description?: string; argumentHint?: string } {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return {};
   const fm = match[1];
+  const nameMatch = fm.match(/name:\s*(.+)/);
   const desc = fm.match(/description:\s*(.+)/);
   const arg = fm.match(/argument-hint:\s*(.+)/);
   return {
+    name: nameMatch ? nameMatch[1].trim().replace(/^["']|["']$/g, '') : undefined,
     description: desc ? desc[1].trim().replace(/^["']|["']$/g, '') : undefined,
     argumentHint: arg ? arg[1].trim().replace(/^["']|["']$/g, '') : undefined,
   };
@@ -106,9 +108,7 @@ function scanSkillsDir(dir: string): CommandInfo[] {
         if (existsSync(skillFile)) {
           const content = readFileSync(skillFile, 'utf-8');
           const fm = parseFrontmatter(content);
-          // parseFrontmatter needs to also extract 'name' field
-          const nameMatch = content.match(/^---\n[\s\S]*?name:\s*(.+?)[\s\S]*?\n---/);
-          const name = nameMatch ? nameMatch[1].trim().replace(/^["']|["']$/g, '') : item;
+          const name = fm.name || item;
           skills.push({ name, description: fm.description || `Run /${item} skill`, argumentHint: fm.argumentHint });
         } else {
           skills.push(...scanSkillsDir(itemPath));
