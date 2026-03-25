@@ -10,6 +10,8 @@ interface UseFileTabSaveCopyDownloadOperationsOptions {
   isDirty: boolean;
   content: FileContent | null;
   fileName: string;
+  /** Called after a successful save so the caller can update originalContent */
+  onSaveSuccess?: () => void;
 }
 
 /**
@@ -23,6 +25,7 @@ export function useFileTabSaveCopyDownloadOperations({
   isDirty,
   content,
   fileName,
+  onSaveSuccess,
 }: UseFileTabSaveCopyDownloadOperationsOptions) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [copied, setCopied] = useState(false);
@@ -50,6 +53,7 @@ export function useFileTabSaveCopyDownloadOperations({
       }
 
       setSaveStatus('saved');
+      onSaveSuccess?.();
       setTimeout(() => setSaveStatus('idle'), 1500);
     } catch (err) {
       console.error('Save error:', err);

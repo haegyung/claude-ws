@@ -56,9 +56,13 @@ export function useFileTabState({ tabId, filePath }: UseFileTabStateOptions) {
   const search = useFileTabSearch({ editedContent });
   const fileName = filePath.split('/').pop() || filePath;
 
+  const onSaveSuccess = useCallback(() => {
+    setOriginalContent(editedContent);
+  }, [editedContent]);
+
   const saveOps = useFileTabSaveCopyDownloadOperations({
     filePath, activeProjectPath: activeProject?.path,
-    editedContent, isDirty, content, fileName,
+    editedContent, isDirty, content, fileName, onSaveSuccess,
   });
 
   const attachOps = useFileTabAttachToChat({
