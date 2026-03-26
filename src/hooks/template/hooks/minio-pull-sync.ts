@@ -3,58 +3,143 @@ import { existsSync } from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { randomUUID } from "crypto";
+import { config as dotenvConfig } from "dotenv";
 
-// Import centralized hook environment manager
-import {
-  ensureHookEnv,
-  readHookEnv,
-  validateHookEnv,
-  getHookEnvConfigFromServerEnv
-} from "@/lib/hook-env-manager";
+type HookEnvState = {
+  apiHookUrl: string;
+  apiHookApiKey: string;
+  projectId: string;
+};
+
+function resolveRoomTemplate(value: string, projectId: string): string {
+  const trimmed = value.trim().replace(/^"|"$/g, "");
+  if (!trimmed) return "";
+  if (!projectId) return trimmed;
+  return trimmed
+    .replace(/\{room_id\}/gi, projectId)
+    .replace(/room_id/gi, projectId);
+}
+
+function resolveApiHookUrl(projectId: string): string {
+  const domainTemplate = process.env.API_HOOK_URL_DOMAIN || "";
+  if (domainTemplate.trim()) {
+    return resolveRoomTemplate(domainTemplate, projectId);
+  }
+
+  const explicit = process.env.API_HOOK_URL || "";
+  if (explicit.trim()) {
+    return resolveRoomTemplate(explicit, projectId);
+  }
+
+  const local = process.env.API_HOOK_URL_LOCAL || "";
+  if (local.trim()) {
+    return resolveRoomTemplate(local, projectId);
+  }
+
+  return "";
+}
+
+function findWorkspaceRoot(startPath: string = process.cwd()): string {
+  const explicitRoot = process.env.CLAUDE_WS_USER_CWD;
+  if (explicitRoot && existsSync(path.join(explicitRoot, ".env"))) {
+    return explicitRoot;
+  }
+
+  let current = path.resolve(startPath);
+  while (true) {
+    if (existsSync(path.join(current, ".env"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return explicitRoot || process.cwd();
+}
+
+function loadRootEnv(startPath: string = process.cwd()): void {
+  const workspaceRoot = findWorkspaceRoot(startPath);
+  const envPath = path.join(workspaceRoot, ".env");
+  if (existsSync(envPath)) {
+    dotenvConfig({ path: envPath, override: false });
+  }
+}
+
+function getHookEnvPath(projectPath: string): string {
+  return path.join(projectPath, ".claude", "hooks", "hook.env");
+}
+
+function generateHookEnvContent(projectId: string): string {
+  return `# ================================================
+# Claude Workspace - Hook Environment Configuration
+# ================================================
+# This file is intentionally minimal.
+# Sync configuration is loaded from workspace root .env.
+
+# Project ID (REQUIRED)
+# Unique identifier for this project
+PROJECT_ID=${projectId}
+`;
+}
+
+async function ensureMinimalHookEnv(projectPath: string, fallbackProjectId?: string): Promise<void> {
+  const hookEnvPath = getHookEnvPath(projectPath);
+  await fs.mkdir(path.dirname(hookEnvPath), { recursive: true });
+
+  let currentProjectId = (fallbackProjectId || "").trim();
+  if (existsSync(hookEnvPath)) {
+    const content = await fs.readFile(hookEnvPath, "utf-8");
+    const match = content.match(/^\s*PROJECT_ID\s*=\s*(.+)\s*$/m);
+    if (match?.[1]) {
+      currentProjectId = match[1].trim().replace(/^"|"$/g, "");
+    }
+  }
+
+  const finalProjectId = currentProjectId || "__PROJECT_ID__";
+  await fs.writeFile(hookEnvPath, generateHookEnvContent(finalProjectId), "utf-8");
+}
+
+async function readProjectId(projectPath: string, fallbackProjectId?: string): Promise<string> {
+  const hookEnvPath = getHookEnvPath(projectPath);
+  if (!existsSync(hookEnvPath)) {
+    throw new Error(`hook.env not found at ${hookEnvPath}`);
+  }
+
+  const content = await fs.readFile(hookEnvPath, "utf-8");
+  const match = content.match(/^\s*PROJECT_ID\s*=\s*(.+)\s*$/m);
+  const fromFile = match?.[1]?.trim().replace(/^"|"$/g, "") || "";
+  return fromFile || fallbackProjectId || "__PROJECT_ID__";
+}
 
 // ==========================================
 // Initialize Hook Environment
 // ==========================================
 
-async function initializeHookEnv() {
+async function initializeHookEnv(): Promise<HookEnvState> {
   const projectPath = process.cwd();
-  const projectId = process.env.PROJECT_ID;
+  loadRootEnv(projectPath);
+  const fallbackProjectId = (process.env.PROJECT_ID || "").trim();
+  const hookEnvPath = getHookEnvPath(projectPath);
 
-  // Validate hook.env
-  const validation = await validateHookEnv(projectPath, ['API_HOOK_URL']);
-
-  if (!validation.exists) {
-    console.error(`⚠️  hook.env not found at ${validation.path}`);
-    console.error(`🔧 Auto-recreating from server configuration...`);
-
-    // Recreate from server .env
-    const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
-    await ensureHookEnv(projectPath, projectId, serverConfig);
-
-    console.error(`✅ hook.env recreated successfully`);
-  } else if (!validation.valid) {
-    console.error(`⚠️  hook.env is invalid: ${validation.missingVars.join(', ')}`);
-    console.error(`🔧 Auto-upgrading with missing variables...`);
-
-    // Upgrade with missing variables
-    const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
-    await ensureHookEnv(projectPath, projectId, serverConfig);
-
-    console.error(`✅ hook.env upgraded successfully`);
+  if (!existsSync(hookEnvPath)) {
+    await ensureMinimalHookEnv(projectPath, fallbackProjectId);
+  } else {
+    const content = await fs.readFile(hookEnvPath, "utf-8");
+    if (!/^\s*PROJECT_ID\s*=.+$/m.test(content)) {
+      await ensureMinimalHookEnv(projectPath, fallbackProjectId);
+    }
   }
 
-  // Load the environment
-  const hookEnv = await readHookEnv(projectPath, projectId);
-
-  // Validate required variables
-  if (!hookEnv.apiHookUrl) {
-    console.error('❌ API_HOOK_URL is required but missing!');
-    console.error('💡 Check your server .env file has API_HOOK_URL configured');
-    console.error('💡 Example: API_HOOK_URL=https://api.example.com/api/sync');
+  const projectId = await readProjectId(projectPath, fallbackProjectId);
+  if (!projectId) {
+    console.error('❌ PROJECT_ID is required but missing in hook.env!');
     process.exit(1);
   }
 
-  return hookEnv;
+  return {
+    apiHookUrl: resolveApiHookUrl(projectId),
+    apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
+    projectId,
+  };
 }
 
 let config: {
@@ -69,6 +154,11 @@ function initializeRuntimeConfig(hookEnv: Awaited<ReturnType<typeof initializeHo
     apiHookApiKey: (hookEnv.apiHookApiKey || "").trim(),
     projectId: (hookEnv.projectId || "__PROJECT_ID__") as string,
   };
+
+  if (!config.apiBaseUrl) {
+    console.error("❌ Missing API_HOOK_URL in workspace root .env!");
+    process.exit(1);
+  }
 }
 
 const hooksDir = path.join(process.cwd(), ".claude", "hooks");
@@ -187,7 +277,7 @@ async function fetchManifest(label: string, options?: { root?: "markdown"; allow
   const url = root ? buildApiUrl(`manifest?root=${encodeURIComponent(root)}`) : buildApiUrl("manifest");
   const response = await fetch(url, { headers: buildApiHeaders() });
 
-  if (response.status === 404 && allowNotFound) {
+  if ((response.status === 404 || response.status === 400) && allowNotFound) {
     console.error(`ℹ️ ${label} not found on remote, treating as empty manifest.`);
     return [];
   }

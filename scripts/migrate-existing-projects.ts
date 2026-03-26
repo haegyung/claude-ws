@@ -17,7 +17,6 @@ import fs from 'fs';
 import { config, parse as parseDotenv } from 'dotenv';
 import { db, schema } from '../src/lib/db';
 import { setupProjectDefaults } from '../src/lib/project-utils';
-import { resolveApiHookUrl } from '../src/lib/api-hook-url';
 
 type ProjectTarget = {
   id: string;
@@ -30,11 +29,6 @@ function inferProjectIdFromDirName(dirName: string): string {
   const firstDash = dirName.indexOf('-');
   if (firstDash <= 0) return dirName;
   return dirName.slice(0, firstDash);
-}
-
-function quoteEnvValue(value: string): string {
-  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `"${escaped}"`;
 }
 
 function getProjectIdFromHookEnv(projectPath: string): string | null {
@@ -56,57 +50,10 @@ function getProjectIdFromHookEnv(projectPath: string): string | null {
 function syncProjectHookEnv(projectPath: string, projectId: string): { updated: boolean; reason: string } {
   const hooksDir = path.join(projectPath, '.claude', 'hooks');
   const envPath = path.join(hooksDir, 'hook.env');
-  const legacyEnvPath = path.join(hooksDir, '.env');
   fs.mkdirSync(hooksDir, { recursive: true });
 
-  let content = '';
-  if (fs.existsSync(envPath)) {
-    content = fs.readFileSync(envPath, 'utf-8');
-  } else if (fs.existsSync(legacyEnvPath)) {
-    content = fs.readFileSync(legacyEnvPath, 'utf-8');
-  }
-
-  const currentEnv = parseDotenv(content);
-  const envMap = new Map<string, string>(Object.entries(currentEnv));
-  const apiHookUrl = resolveApiHookUrl(envMap, undefined, projectId);
-  if (!apiHookUrl) {
-    throw new Error('Cannot resolve API_HOOK_URL. Set API_HOOK_URL/API_HOOK_URL_DOMAIN/API_HOOK_URL_LOCAL in root .env or project hook hook.env.');
-  }
-
-  const nextLineByKey: Record<string, string> = {
-    API_HOOK_URL: `API_HOOK_URL=${quoteEnvValue(apiHookUrl)}`,
-    PROJECT_ID: `PROJECT_ID=${quoteEnvValue(projectId)}`,
-  };
-
-  const apiHookApiKey = process.env.API_HOOK_API_KEY?.trim();
-  if (apiHookApiKey) {
-    nextLineByKey.API_HOOK_API_KEY = `API_HOOK_API_KEY=${quoteEnvValue(apiHookApiKey)}`;
-  }
-
-  const lines = content.length > 0 ? content.split(/\r?\n/) : [];
-  const replaced = new Set<string>();
-  const nextLines = lines.map((line) => {
-    for (const [key, nextLine] of Object.entries(nextLineByKey)) {
-      if (new RegExp(`^\\s*${key}\\s*=`).test(line)) {
-        replaced.add(key);
-        return nextLine;
-      }
-    }
-    return line;
-  });
-
-  for (const [key, nextLine] of Object.entries(nextLineByKey)) {
-    if (replaced.has(key)) continue;
-    if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== '') {
-      nextLines.push(nextLine);
-    } else if (nextLines.length === 0) {
-      nextLines.push(nextLine);
-    } else {
-      nextLines[nextLines.length - 1] = nextLine;
-    }
-  }
-
-  const normalized = `${nextLines.join('\n').replace(/\n*$/, '\n')}`;
+  const normalized = `# ================================================\n# Claude Workspace - Hook Environment Configuration\n# ================================================\n# This file is intentionally minimal.\n# Sync configuration is loaded from workspace root .env.\n\n# Project ID (REQUIRED)\n# Unique identifier for this project\nPROJECT_ID=${projectId}\n`;
+  const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
   if (normalized === content) {
     return { updated: false, reason: 'already-correct' };
   }

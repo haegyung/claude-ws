@@ -211,24 +211,22 @@ async function openExistingPushQueueDb(projectPath: string): Promise<Database.Da
 
 async function readHookEnv(projectPath: string, fallbackProjectId: string): Promise<HookEnv> {
   // Auto-migrate if .env exists but hook.env doesn't
-  const { migrateLegacyEnv, validateHookEnv, readHookEnv: readHookEnvFromFile, ensureHookEnv, getHookEnvConfigFromServerEnv } = await import('@/lib/hook-env-manager');
+  const { validateHookEnv, readHookEnv: readHookEnvFromFile, ensureHookEnv, upgradeHookEnv, getHookEnvConfigFromServerEnv } = await import('@/lib/hook-env-manager');
 
-  const validation = await validateHookEnv(projectPath, ['API_HOOK_URL']);
+  const validation = await validateHookEnv(projectPath, ['PROJECT_ID']);
 
   if (!validation.exists) {
     console.error(`⚠️  Project ${projectPath} missing hook.env, auto-recreating...`);
 
     // Auto-recreate from server config
-    const serverConfig = await getHookEnvConfigFromServerEnv(fallbackProjectId);
+    const serverConfig = await getHookEnvConfigFromServerEnv(fallbackProjectId, projectPath);
     await ensureHookEnv(projectPath, fallbackProjectId, serverConfig);
 
     console.error(`✅ Recreated hook.env for ${projectPath}`);
   } else if (!validation.valid) {
     console.error(`⚠️  Project ${projectPath} has invalid hook.env, auto-upgrading...`);
 
-    // Auto-upgrade
-    const serverConfig = await getHookEnvConfigFromServerEnv(fallbackProjectId);
-    await ensureHookEnv(projectPath, fallbackProjectId, serverConfig);
+    await upgradeHookEnv(projectPath, fallbackProjectId);
 
     console.error(`✅ Upgraded hook.env for ${projectPath}`);
   }
@@ -241,6 +239,7 @@ async function readHookEnv(projectPath: string, fallbackProjectId: string): Prom
   if (!apiHookUrl) {
     throw new Error(
       'API_HOOK_URL not configured in hook.env or server .env. ' +
+      'hook.env now only contains PROJECT_ID. ' +
       'Please check server configuration.'
     );
   }

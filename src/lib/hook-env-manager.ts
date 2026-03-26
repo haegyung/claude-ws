@@ -8,7 +8,8 @@
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { config as dotenvConfig } from 'dotenv';
+import { config as dotenvConfig, parse as parseDotenv } from 'dotenv';
+import { resolveApiHookUrl } from './api-hook-url';
 
 // ==========================================
 // Types & Interfaces
@@ -18,7 +19,6 @@ export interface HookEnvConfig {
   apiHookUrl?: string;
   apiHookApiKey?: string;
   apiAccessKey?: string;
-  apiQueueHost?: string;
   port?: string;
   projectId?: string;
 }
@@ -30,6 +30,8 @@ export interface HookEnvValidationResult {
   errors: string[];
   path: string;
 }
+
+let rootEnvLoaded = false;
 
 // ==========================================
 // Path Utilities
@@ -49,6 +51,70 @@ export function getLegacyEnvPath(projectPath: string): string {
   return path.join(projectPath, '.claude', 'hooks', '.env');
 }
 
+function parseHookEnvMap(content: string): Map<string, string> {
+  const map = new Map<string, string>();
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim().replace(/^"|"$/g, '');
+    map.set(key, value);
+  }
+
+  return map;
+}
+
+function findWorkspaceRoot(startPath: string = process.cwd()): string {
+  const explicitRoot = process.env.CLAUDE_WS_USER_CWD;
+  if (explicitRoot) {
+    const explicitEnvPath = path.join(explicitRoot, '.env');
+    if (existsSync(explicitEnvPath)) {
+      return explicitRoot;
+    }
+  }
+
+  let current = path.resolve(startPath);
+
+  while (true) {
+    const envPath = path.join(current, '.env');
+    if (existsSync(envPath)) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+
+    current = parent;
+  }
+
+  return explicitRoot || process.cwd();
+}
+
+export function loadRootEnvForHooks(startPath: string = process.cwd()): string | null {
+  if (rootEnvLoaded) {
+    return null;
+  }
+
+  const workspaceRoot = findWorkspaceRoot(startPath);
+  const envPath = path.join(workspaceRoot, '.env');
+
+  if (!existsSync(envPath)) {
+    rootEnvLoaded = true;
+    return null;
+  }
+
+  dotenvConfig({ path: envPath, override: false });
+  rootEnvLoaded = true;
+  return envPath;
+}
+
 // ==========================================
 // Template Generation
 // ==========================================
@@ -58,76 +124,24 @@ export function getLegacyEnvPath(projectPath: string): string {
  */
 export function generateHookEnvContent(
   projectId: string,
-  config?: Partial<HookEnvConfig>,
+  _config?: Partial<HookEnvConfig>,
   includeComments: boolean = true
 ): string {
-  const values = {
-    apiHookUrl: config?.apiHookUrl || '',
-    apiHookApiKey: config?.apiHookApiKey || '',
-    apiAccessKey: config?.apiAccessKey || '',
-    apiQueueHost: config?.apiQueueHost || 'localhost',
-    port: config?.port || '',
-    projectId: projectId || '__PROJECT_ID__'
-  };
+  const normalizedProjectId = projectId || '__PROJECT_ID__';
 
   if (!includeComments) {
-    // Minimal format without comments
-    return `API_HOOK_URL=${values.apiHookUrl}
-API_HOOK_API_KEY=${values.apiHookApiKey}
-API_ACCESS_KEY=${values.apiAccessKey}
-API_QUEUE_HOST=${values.apiQueueHost}
-PORT=${values.port}
-PROJECT_ID=${values.projectId}
-`;
+    return `PROJECT_ID=${normalizedProjectId}\n`;
   }
 
-  // Full format with comments
   return `# ================================================
 # Claude Workspace - Hook Environment Configuration
 # ================================================
-# This file configures MinIO sync hooks for this project
-# Auto-generated from server .env - DO NOT edit manually unless required
+# This file is intentionally minimal.
+# Sync configuration is loaded from workspace root .env.
 
-# ----------------------------------
-# API Hook Configuration
-# ----------------------------------
-
-# API Hook URL (REQUIRED)
-# Full URL or use {room_id} placeholder
-# Example: https://api.example.com/api/v1/internal/rooms/{room_id}/files/
-API_HOOK_URL=${values.apiHookUrl}
-
-# ----------------------------------
-# Authentication
-# ----------------------------------
-
-# API Hook API Key (OPTIONAL)
-# Auto-populated from server API_HOOK_API_KEY
-API_HOOK_API_KEY=${values.apiHookApiKey}
-
-# ----------------------------------
-# Queue Configuration (Push Sync Only)
-# ----------------------------------
-
-# Queue Access Key (OPTIONAL)
-# Auto-populated from server API_ACCESS_KEY
-API_ACCESS_KEY=${values.apiAccessKey}
-
-# Queue Host (OPTIONAL, default: localhost)
-# Auto-populated from server API_QUEUE_HOST
-API_QUEUE_HOST=${values.apiQueueHost}
-
-# Server Port (OPTIONAL)
-# Auto-populated from server PORT
-PORT=${values.port}
-
-# ----------------------------------
-# Project Identification
-# ----------------------------------
-
-# Project ID (AUTO-GENERATED)
+# Project ID (REQUIRED)
 # Unique identifier for this project
-PROJECT_ID=${values.projectId}
+PROJECT_ID=${normalizedProjectId}
 `;
 }
 
@@ -139,15 +153,18 @@ PROJECT_ID=${values.projectId}
  * Read hook environment configuration from server's process.env
  */
 export async function getHookEnvConfigFromServerEnv(
-  projectId?: string
+  projectId?: string,
+  projectPath?: string,
 ): Promise<Partial<HookEnvConfig>> {
+  loadRootEnvForHooks(projectPath || process.cwd());
+  const resolvedProjectId = (projectId || process.env.PROJECT_ID || '__PROJECT_ID__').trim();
+
   return {
-    apiHookUrl: process.env.API_HOOK_URL,
+    apiHookUrl: resolveApiHookUrl(undefined, undefined, resolvedProjectId),
     apiHookApiKey: process.env.API_HOOK_API_KEY?.trim(),
     apiAccessKey: process.env.API_ACCESS_KEY?.trim(),
-    apiQueueHost: process.env.API_QUEUE_HOST || 'localhost',
     port: process.env.PORT,
-    projectId: projectId || '__PROJECT_ID__'
+    projectId: resolvedProjectId
   };
 }
 
@@ -180,8 +197,8 @@ export async function ensureHookEnv(
     return hookEnvPath;
   }
 
-  // Generate content from config or server env
-  const finalConfig = config || await getHookEnvConfigFromServerEnv(projectId);
+  // Generate minimal content
+  const finalConfig = config || await getHookEnvConfigFromServerEnv(projectId, projectPath);
   const content = generateHookEnvContent(
     finalConfig.projectId || projectId || '__PROJECT_ID__',
     finalConfig,
@@ -213,29 +230,18 @@ export async function readHookEnv(
 
   // Read file
   const content = await fs.readFile(hookEnvPath, 'utf-8');
+  const map = parseHookEnvMap(content);
 
-  // Parse environment variables
-  const map = new Map<string, string>();
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-
-    const idx = line.indexOf('=');
-    if (idx <= 0) continue;
-
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim().replace(/^"|"$/g, '');
-    map.set(key, value);
-  }
+  loadRootEnvForHooks(projectPath);
+  const projectId = map.get('PROJECT_ID') || fallbackProjectId || '__PROJECT_ID__';
 
   // Extract values
   return {
-    apiHookUrl: map.get('API_HOOK_URL') || '',
-    apiHookApiKey: map.get('API_HOOK_API_KEY') || '',
-    apiAccessKey: map.get('API_ACCESS_KEY') || '',
-    apiQueueHost: map.get('API_QUEUE_HOST') || 'localhost',
-    port: map.get('PORT') || '',
-    projectId: map.get('PROJECT_ID') || fallbackProjectId || '__PROJECT_ID__'
+    apiHookUrl: resolveApiHookUrl(map, undefined, projectId),
+    apiHookApiKey: (process.env.API_HOOK_API_KEY || '').trim(),
+    apiAccessKey: (process.env.API_ACCESS_KEY || '').trim(),
+    port: (process.env.PORT || '').trim(),
+    projectId
   };
 }
 
@@ -248,7 +254,7 @@ export async function readHookEnv(
  */
 export async function validateHookEnv(
   projectPath: string,
-  requiredVars: string[] = ['API_HOOK_URL']
+  requiredVars: string[] = ['PROJECT_ID']
 ): Promise<HookEnvValidationResult> {
   const hookEnvPath = getHookEnvPath(projectPath);
   const result: HookEnvValidationResult = {
@@ -272,12 +278,12 @@ export async function validateHookEnv(
 
   // Try to read and parse
   try {
-    const config = await readHookEnv(projectPath);
+    const content = await fs.readFile(hookEnvPath, 'utf-8');
+    const map = parseHookEnvMap(content);
 
-    // Check required variables
     for (const varName of requiredVars) {
-      const value = config[varName as keyof HookEnvConfig];
-      if (!value || value.trim() === '') {
+      const value = (map.get(varName) || '').trim();
+      if (!value) {
         result.missingVars.push(varName);
         result.valid = false;
       }
@@ -316,20 +322,17 @@ export async function migrateLegacyEnv(
     return { migrated: false, from: legacyPath, to: hookEnvPath };
   }
 
-  // Read legacy .env
-  const content = await fs.readFile(legacyPath, 'utf-8');
+  const legacyContent = await fs.readFile(legacyPath, 'utf-8');
+  const parsed = parseDotenv(legacyContent);
+  const projectId = (parsed.PROJECT_ID || '').trim() || '__PROJECT_ID__';
 
-  // Write to hook.env
-  await fs.writeFile(hookEnvPath, content, 'utf-8');
-
-  // Optionally, you could delete the legacy file here
-  // await fs.unlink(legacyPath);
+  await fs.writeFile(hookEnvPath, generateHookEnvContent(projectId, undefined, true), 'utf-8');
 
   return { migrated: true, from: legacyPath, to: hookEnvPath };
 }
 
 /**
- * Upgrade existing hook.env with missing variables
+ * Upgrade existing hook.env to current minimal format
  *
  * @param projectPath - Absolute path to project
  * @param projectId - Project ID
@@ -342,64 +345,23 @@ export async function upgradeHookEnv(
   const hookEnvPath = getHookEnvPath(projectPath);
 
   if (!existsSync(hookEnvPath)) {
-    // File doesn't exist, create it
     await ensureHookEnv(projectPath, projectId);
-    return { upgraded: true, addedVars: ['all'] };
+    return { upgraded: true, addedVars: ['PROJECT_ID'] };
   }
 
-  // Read current content
   const currentContent = await fs.readFile(hookEnvPath, 'utf-8');
+  const currentVars = parseHookEnvMap(currentContent);
+  const finalProjectId =
+    (currentVars.get('PROJECT_ID') || '').trim() ||
+    (projectId || '').trim() ||
+    '__PROJECT_ID__';
 
-  // Parse current variables
-  const currentVars = new Set<string>();
-  for (const line of currentContent.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const idx = trimmed.indexOf('=');
-    if (idx > 0) {
-      currentVars.add(trimmed.slice(0, idx).trim());
-    }
-  }
+  const desiredContent = generateHookEnvContent(finalProjectId, undefined, true);
 
-  // Get server config
-  const serverConfig = await getHookEnvConfigFromServerEnv(projectId);
-
-  // Variables that should be present
-  const requiredVars = [
-    'API_HOOK_URL',
-    'API_HOOK_API_KEY',
-    'API_ACCESS_KEY',
-    'API_QUEUE_HOST',
-    'PORT',
-    'PROJECT_ID'
-  ];
-
-  // Find missing variables
-  const missingVars = requiredVars.filter(v => !currentVars.has(v));
-
-  if (missingVars.length === 0) {
+  if (currentContent === desiredContent) {
     return { upgraded: false, addedVars: [] };
   }
 
-  // Append missing variables
-  const appendLines: string[] = [];
-
-  for (const varName of missingVars) {
-    const key = varName as keyof HookEnvConfig;
-    const value = serverConfig[key] || '';
-
-    if (varName === 'PROJECT_ID') {
-      appendLines.push(`PROJECT_ID=${projectId || serverConfig.projectId || '__PROJECT_ID__'}`);
-    } else if (varName === 'API_QUEUE_HOST') {
-      appendLines.push(`API_QUEUE_HOST=${value || 'localhost'}`);
-    } else {
-      appendLines.push(`${varName}=${value || ''}`);
-    }
-  }
-
-  // Append to file
-  const newContent = currentContent.trimEnd() + '\n\n# Added by upgrade\n' + appendLines.join('\n') + '\n';
-  await fs.writeFile(hookEnvPath, newContent, 'utf-8');
-
-  return { upgraded: true, addedVars: missingVars };
+  await fs.writeFile(hookEnvPath, desiredContent, 'utf-8');
+  return { upgraded: true, addedVars: ['PROJECT_ID'] };
 }

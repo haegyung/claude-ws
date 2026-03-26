@@ -2,26 +2,28 @@
 /**
  * Migrate All Projects Script
  *
- * Migrate tất cả projects với các thay đổi mới:
- * 1. Upgrade hook.env với đầy đủ variables
- * 2. Loại bỏ deprecated variables
- * 3. Cập nhật hook templates
+ * Migrate tất cả projects theo chuẩn mới:
+ * 1. hook.env chỉ còn PROJECT_ID
+ * 2. Đồng bộ hook templates
+ * 3. Ghi đè .claude/settings.json từ template mới
  *
  * Usage:
  *   pnpm migrate-all-projects           # Dry run
  *   pnpm migrate-all-projects --force   # Execute migration
  */
 
-import { db } from '../src/lib/db';
-import { createProjectService } from '@agentic-sdk/services/project/project-crud';
-import {
-  ensureHookEnv,
-  getHookEnvConfigFromServerEnv,
-  getHookEnvPath
-} from '../src/lib/hook-env-manager';
-import fs from 'fs/promises';
-import { existsSync } from 'fs';
 import path from 'path';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import { parse as parseDotenv } from 'dotenv';
+import { db, schema } from '../src/lib/db';
+
+interface ProjectTarget {
+  id: string;
+  name: string;
+  path: string;
+  source: 'db' | 'scan';
+}
 
 interface MigrationResult {
   projectId: string;
@@ -39,321 +41,248 @@ interface MigrationReport {
   recreated: number;
   skipped: number;
   errors: number;
-  deprecatedRemoved: number;
   results: MigrationResult[];
 }
 
-// Deprecated variables to remove
-const DEPRECATED_VARS = [
-  'API_HOOK_URL_DOMAIN',
-  'API_HOOK_URL_LOCAL',
-  'API_QUEUE_FALLBACK_URLS'
-];
-
-const REQUIRED_VARS = [
-  'API_HOOK_URL',
-  'API_HOOK_API_KEY',
-  'API_ACCESS_KEY',
-  'API_QUEUE_HOST',
-  'PORT',
-  'PROJECT_ID'
-] as const;
-
-type RequiredVar = typeof REQUIRED_VARS[number];
 const TEMPLATE_HOOK_FILES = ['minio-pull-sync.ts', 'minio-push-sync.ts', 'hook.env.example'] as const;
 
-function getHooksDir(projectPath: string): string {
-  return path.join(projectPath, '.claude', 'hooks');
+function inferProjectIdFromDirName(dirName: string): string {
+  const firstDash = dirName.indexOf('-');
+  if (firstDash <= 0) return dirName;
+  return dirName.slice(0, firstDash);
 }
 
-async function getTemplateDiffs(projectPath: string): Promise<string[]> {
-  const diffs: string[] = [];
-  const hooksDir = getHooksDir(projectPath);
-  const templateDir = path.join(process.cwd(), 'src', 'hooks', 'template', 'hooks');
+function getProjectIdFromHookEnv(projectPath: string): string | null {
+  const hookEnvPath = path.join(projectPath, '.claude', 'hooks', 'hook.env');
+  const legacyEnvPath = path.join(projectPath, '.claude', 'hooks', '.env');
+  const envPath = fsSync.existsSync(hookEnvPath) ? hookEnvPath : legacyEnvPath;
+  if (!fsSync.existsSync(envPath)) return null;
 
-  for (const fileName of TEMPLATE_HOOK_FILES) {
-    const templatePath = path.join(templateDir, fileName);
-    const projectTemplatePath = path.join(hooksDir, fileName);
+  try {
+    const parsed = parseDotenv(fsSync.readFileSync(envPath, 'utf-8'));
+    const projectId = (parsed.PROJECT_ID || '').trim();
+    return projectId || null;
+  } catch {
+    return null;
+  }
+}
 
-    if (!existsSync(templatePath)) continue;
-    if (!existsSync(projectTemplatePath)) {
-      diffs.push(`add-template:${fileName}`);
-      continue;
-    }
+function generateHookEnvContent(projectId: string): string {
+  return `# ================================================
+# Claude Workspace - Hook Environment Configuration
+# ================================================
+# This file is intentionally minimal.
+# Sync configuration is loaded from workspace root .env.
 
-    const [templateContent, projectContent] = await Promise.all([
-      fs.readFile(templatePath, 'utf-8'),
-      fs.readFile(projectTemplatePath, 'utf-8')
-    ]);
+# Project ID (REQUIRED)
+# Unique identifier for this project
+PROJECT_ID=${projectId}
+`;
+}
 
-    if (templateContent !== projectContent) {
-      diffs.push(`update-template:${fileName}`);
+async function getAllProjectTargets(workspaceRoot: string): Promise<ProjectTarget[]> {
+  const dataDir = process.env.DATA_DIR || path.join(workspaceRoot, 'data');
+  const projectsDir = path.join(dataDir, 'projects');
+  const targets = new Map<string, ProjectTarget>();
+
+  const dbProjects = db.select({
+    id: schema.projects.id,
+    name: schema.projects.name,
+    path: schema.projects.path,
+  }).from(schema.projects).all();
+
+  for (const project of dbProjects) {
+    const absPath = path.resolve(project.path);
+    targets.set(absPath, {
+      id: project.id,
+      name: project.name || project.id,
+      path: absPath,
+      source: 'db',
+    });
+  }
+
+  if (fsSync.existsSync(projectsDir)) {
+    const entries = fsSync.readdirSync(projectsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const absPath = path.resolve(path.join(projectsDir, entry.name));
+      if (targets.has(absPath)) continue;
+
+      const existingProjectId = getProjectIdFromHookEnv(absPath);
+      const inferredId = existingProjectId || inferProjectIdFromDirName(entry.name);
+      targets.set(absPath, {
+        id: inferredId,
+        name: entry.name,
+        path: absPath,
+        source: 'scan',
+      });
     }
   }
 
+  return [...targets.values()];
+}
+
+async function readIfExists(filePath: string): Promise<string | null> {
+  if (!fsSync.existsSync(filePath)) return null;
+  return fs.readFile(filePath, 'utf-8');
+}
+
+async function syncFileFromTemplate(templatePath: string, destinationPath: string): Promise<boolean> {
+  const templateContent = await fs.readFile(templatePath, 'utf-8');
+  const currentContent = await readIfExists(destinationPath);
+  if (currentContent === templateContent) return false;
+
+  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+  await fs.writeFile(destinationPath, templateContent, 'utf-8');
+  return true;
+}
+
+async function getProjectDiffs(projectPath: string, projectId: string, workspaceRoot: string): Promise<string[]> {
+  const diffs: string[] = [];
+  const hooksDir = path.join(projectPath, '.claude', 'hooks');
+  const claudeDir = path.join(projectPath, '.claude');
+  const templateHooksDir = path.join(workspaceRoot, 'src', 'hooks', 'template', 'hooks');
+  const settingsTemplatePath = path.join(workspaceRoot, 'src', 'hooks', 'template', 'settings.json');
+
+  const desiredHookEnv = generateHookEnvContent(projectId);
+  const hookEnvPath = path.join(hooksDir, 'hook.env');
+  const currentHookEnv = await readIfExists(hookEnvPath);
+  if (currentHookEnv !== desiredHookEnv) {
+    diffs.push('rewrite-hook-env');
+  }
+
+  for (const fileName of TEMPLATE_HOOK_FILES) {
+    const templatePath = path.join(templateHooksDir, fileName);
+    const projectPathForFile = path.join(hooksDir, fileName);
+    if (!fsSync.existsSync(templatePath)) continue;
+
+    const [templateContent, projectContent] = await Promise.all([
+      fs.readFile(templatePath, 'utf-8'),
+      readIfExists(projectPathForFile),
+    ]);
+
+    if (templateContent !== projectContent) {
+      diffs.push(`sync-template:${fileName}`);
+    }
+  }
+
+  const currentSettings = await readIfExists(path.join(claudeDir, 'settings.json'));
+  const templateSettings = await fs.readFile(settingsTemplatePath, 'utf-8');
+  if (currentSettings !== templateSettings) {
+    diffs.push('sync-settings');
+  }
+
+  const legacyHookEnv = path.join(hooksDir, '.env');
+  if (fsSync.existsSync(legacyHookEnv)) {
+    diffs.push('remove-legacy:.env');
+  }
+
   const legacyEnvExample = path.join(hooksDir, '.env.example');
-  if (existsSync(legacyEnvExample)) {
+  if (fsSync.existsSync(legacyEnvExample)) {
     diffs.push('remove-legacy:.env.example');
   }
 
   return diffs;
 }
 
-async function syncHookTemplates(projectPath: string): Promise<string[]> {
-  const actions: string[] = [];
-  const hooksDir = getHooksDir(projectPath);
-  const templateDir = path.join(process.cwd(), 'src', 'hooks', 'template', 'hooks');
-
-  await fs.mkdir(hooksDir, { recursive: true });
-
-  for (const fileName of TEMPLATE_HOOK_FILES) {
-    const templatePath = path.join(templateDir, fileName);
-    const projectTemplatePath = path.join(hooksDir, fileName);
-    if (!existsSync(templatePath)) continue;
-
-    const templateContent = await fs.readFile(templatePath, 'utf-8');
-    let shouldWrite = true;
-
-    if (existsSync(projectTemplatePath)) {
-      const projectContent = await fs.readFile(projectTemplatePath, 'utf-8');
-      shouldWrite = projectContent !== templateContent;
-    }
-
-    if (shouldWrite) {
-      await fs.writeFile(projectTemplatePath, templateContent, 'utf-8');
-      actions.push(`Synced template: ${fileName}`);
-    }
-  }
-
-  const legacyEnvExample = path.join(hooksDir, '.env.example');
-  if (existsSync(legacyEnvExample)) {
-    await fs.unlink(legacyEnvExample);
-    actions.push('Removed legacy template: .env.example');
-  }
-
-  return actions;
-}
-
-function parseEnvVars(content: string): Map<string, string> {
-  const vars = new Map<string, string>();
-
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    const idx = trimmed.indexOf('=');
-    if (idx <= 0) continue;
-
-    vars.set(trimmed.slice(0, idx).trim(), trimmed.slice(idx + 1).trim());
-  }
-
-  return vars;
-}
-
-/**
- * Remove deprecated variables from hook.env
- */
-async function removeDeprecatedVariables(hookEnvPath: string): Promise<boolean> {
-  if (!existsSync(hookEnvPath)) {
-    return false;
-  }
-
-  const content = await fs.readFile(hookEnvPath, 'utf-8');
-  const lines = content.split(/\r?\n/);
-  const newLines: string[] = [];
-  let removed = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Check if line contains deprecated variable
-    const isDeprecated = DEPRECATED_VARS.some(varName =>
-      trimmed.startsWith(varName + '=') ||
-      trimmed.startsWith('# ' + varName) ||
-      trimmed.includes(varName)
-    );
-
-    if (isDeprecated) {
-      removed = true;
-    } else {
-      newLines.push(line);
-    }
-  }
-
-  if (removed) {
-    await fs.writeFile(hookEnvPath, newLines.join('\n'), 'utf-8');
-  }
-
-  return removed;
-}
-
-/**
- * Check if hook.env needs upgrade
- */
-async function checkNeedsUpgrade(hookEnvPath: string): Promise<string[]> {
-  if (!existsSync(hookEnvPath)) {
-    return ['all']; // File doesn't exist, needs creation
-  }
-
-  const content = await fs.readFile(hookEnvPath, 'utf-8');
-  const currentVars = parseEnvVars(content);
-
-  // Check for deprecated variables
-  const hasDeprecated = DEPRECATED_VARS.some(v => currentVars.has(v));
-
-  const missingVars = REQUIRED_VARS.filter(v => !currentVars.has(v));
-
-  const needsUpgrade: string[] = [];
-  if (hasDeprecated) needsUpgrade.push('deprecated');
-  if (missingVars.length > 0) needsUpgrade.push('missing:' + missingVars.join(','));
-
-  return needsUpgrade;
-}
-
-/**
- * Migrate a single project
- */
-async function migrateProject(project: any, execute: boolean): Promise<MigrationResult> {
+async function migrateProject(target: ProjectTarget, execute: boolean, workspaceRoot: string): Promise<MigrationResult> {
   const result: MigrationResult = {
-    projectId: project.id,
-    projectName: project.name,
-    projectPath: project.path,
+    projectId: target.id,
+    projectName: target.name,
+    projectPath: target.path,
     actions: [],
-    status: 'success'
+    status: 'success',
   };
 
   try {
-    const hookEnvPath = getHookEnvPath(project.path);
-    const needsUpgrade = await checkNeedsUpgrade(hookEnvPath);
-    const templateDiffs = await getTemplateDiffs(project.path);
-    const hasTemplateChanges = templateDiffs.length > 0;
-    let hasChanges = false;
+    if (!fsSync.existsSync(target.path)) {
+      result.status = 'skipped';
+      result.actions.push('Path does not exist');
+      return result;
+    }
 
-    if (needsUpgrade.length === 0 && !hasTemplateChanges) {
+    const diffs = await getProjectDiffs(target.path, target.id, workspaceRoot);
+    if (diffs.length === 0) {
       result.status = 'skipped';
       result.actions.push('No changes needed - already up to date');
       return result;
     }
 
     if (!execute) {
-      // Dry run - just report what would happen
-      if (needsUpgrade.length > 0) {
-        result.actions.push(`[DRY RUN] Would upgrade: ${needsUpgrade.join(', ')}`);
-      }
-
-      if (needsUpgrade.includes('all')) {
-        result.actions.push('[DRY RUN] Would create hook.env with full template');
-      } else {
-        if (needsUpgrade.includes('deprecated')) {
-          result.actions.push(`[DRY RUN] Would remove: ${DEPRECATED_VARS.join(', ')}`);
-        }
-        const missing = needsUpgrade.find(n => n.startsWith('missing:'));
-        if (missing) {
-          const vars = missing.replace('missing:', '').split(',');
-          result.actions.push(`[DRY RUN] Would add: ${vars.join(', ')}`);
-        }
-      }
-      for (const diff of templateDiffs) {
-        if (diff.startsWith('add-template:')) {
-          result.actions.push(`[DRY RUN] Would add template ${diff.replace('add-template:', '')}`);
-        } else if (diff.startsWith('update-template:')) {
-          result.actions.push(`[DRY RUN] Would update template ${diff.replace('update-template:', '')}`);
-        } else if (diff === 'remove-legacy:.env.example') {
-          result.actions.push('[DRY RUN] Would remove legacy .env.example');
-        }
+      result.status = 'upgraded';
+      for (const diff of diffs) {
+        result.actions.push(`[DRY RUN] Would ${diff}`);
       }
       return result;
     }
 
-    // Execute migration
+    const hooksDir = path.join(target.path, '.claude', 'hooks');
+    const claudeDir = path.join(target.path, '.claude');
+    const templateHooksDir = path.join(workspaceRoot, 'src', 'hooks', 'template', 'hooks');
+    const settingsTemplatePath = path.join(workspaceRoot, 'src', 'hooks', 'template', 'settings.json');
 
-    // Step 1: Remove deprecated variables
-    const deprecatedRemoved = await removeDeprecatedVariables(hookEnvPath);
-    if (deprecatedRemoved) {
-      result.actions.push(`Removed deprecated variables: ${DEPRECATED_VARS.join(', ')}`);
-      hasChanges = true;
-    }
+    await fs.mkdir(hooksDir, { recursive: true });
+    await fs.mkdir(claudeDir, { recursive: true });
 
-    // Step 2: Ensure hook.env exists with all variables
-    const serverConfig = await getHookEnvConfigFromServerEnv(project.id);
-
-    // Check if hook.env exists
-    if (!existsSync(hookEnvPath)) {
-      // Create new hook.env
-      await ensureHookEnv(project.path, project.id, serverConfig);
-      result.actions.push('Created hook.env with full template');
+    const hookEnvPath = path.join(hooksDir, 'hook.env');
+    const hookEnvContent = generateHookEnvContent(target.id);
+    const previousHookEnv = await readIfExists(hookEnvPath);
+    await fs.writeFile(hookEnvPath, hookEnvContent, 'utf-8');
+    if (previousHookEnv === null) {
+      result.actions.push('Created hook.env (PROJECT_ID only)');
       result.status = 'recreated';
-      hasChanges = true;
     } else {
-      // Upgrade existing hook.env
-      const currentContent = await fs.readFile(hookEnvPath, 'utf-8');
-      const currentVars = parseEnvVars(currentContent);
+      result.actions.push('Rewrote hook.env to minimal format');
+      if (result.status !== 'recreated') result.status = 'upgraded';
+    }
 
-      // Find missing variables
-      const missingVars = REQUIRED_VARS.filter(v => !currentVars.has(v));
-
-      if (missingVars.length > 0) {
-        // Append missing variables
-        const appendLines: string[] = [];
-        const serverValueByEnvVar: Record<RequiredVar, string> = {
-          API_HOOK_URL: serverConfig.apiHookUrl || '',
-          API_HOOK_API_KEY: serverConfig.apiHookApiKey || '',
-          API_ACCESS_KEY: serverConfig.apiAccessKey || '',
-          API_QUEUE_HOST: serverConfig.apiQueueHost || 'localhost',
-          PORT: serverConfig.port || '',
-          PROJECT_ID: project.id
-        };
-
-        for (const varName of missingVars) {
-          appendLines.push(`${varName}=${serverValueByEnvVar[varName]}`);
-        }
-
-        const newContent = currentContent.trimEnd() + '\n\n# Added by migration\n' + appendLines.join('\n') + '\n';
-        await fs.writeFile(hookEnvPath, newContent, 'utf-8');
-
-        result.actions.push(`Added missing variables: ${missingVars.join(', ')}`);
-        result.status = 'upgraded';
-        hasChanges = true;
+    for (const fileName of TEMPLATE_HOOK_FILES) {
+      const changed = await syncFileFromTemplate(
+        path.join(templateHooksDir, fileName),
+        path.join(hooksDir, fileName),
+      );
+      if (changed) {
+        result.actions.push(`Synced template: ${fileName}`);
+        if (result.status !== 'recreated') result.status = 'upgraded';
       }
     }
 
-    const templateActions = await syncHookTemplates(project.path);
-    if (templateActions.length > 0) {
-      result.actions.push(...templateActions);
-      hasChanges = true;
-      if (result.status === 'success') {
-        result.status = 'upgraded';
-      }
+    const settingsChanged = await syncFileFromTemplate(
+      settingsTemplatePath,
+      path.join(claudeDir, 'settings.json'),
+    );
+    if (settingsChanged) {
+      result.actions.push('Overwrote .claude/settings.json from template');
+      if (result.status !== 'recreated') result.status = 'upgraded';
     }
 
-    // Step 3: Validate final result using actual env variable names
-    const finalContent = await fs.readFile(hookEnvPath, 'utf-8');
-    const finalVars = parseEnvVars(finalContent);
-    const stillMissing = ['API_HOOK_URL', 'PROJECT_ID'].filter(v => {
-      const value = finalVars.get(v)?.trim();
-      return !value;
-    });
-
-    if (stillMissing.length > 0) {
-      result.actions.push(`Warning: Still missing - ${stillMissing.join(', ')}`);
+    const legacyHookEnvPath = path.join(hooksDir, '.env');
+    if (fsSync.existsSync(legacyHookEnvPath)) {
+      await fs.unlink(legacyHookEnvPath);
+      result.actions.push('Removed legacy .claude/hooks/.env');
+      if (result.status !== 'recreated') result.status = 'upgraded';
     }
 
-    if (!hasChanges && result.status === 'success') {
+    const legacyEnvExamplePath = path.join(hooksDir, '.env.example');
+    if (fsSync.existsSync(legacyEnvExamplePath)) {
+      await fs.unlink(legacyEnvExamplePath);
+      result.actions.push('Removed legacy .claude/hooks/.env.example');
+      if (result.status !== 'recreated') result.status = 'upgraded';
+    }
+
+    if (result.actions.length === 0) {
       result.status = 'skipped';
       result.actions.push('No changes needed - already up to date');
     }
-
   } catch (error: any) {
     result.status = 'error';
-    result.error = error.message || String(error);
+    result.error = error?.message || String(error);
   }
 
   return result;
 }
 
-/**
- * Generate migration report
- */
 function generateReport(report: MigrationReport, dryRun: boolean): string {
   const lines: string[] = [];
 
@@ -366,7 +295,6 @@ function generateReport(report: MigrationReport, dryRun: boolean): string {
   lines.push(`Recreated:         ${report.recreated}`);
   lines.push(`Upgraded:          ${report.upgraded}`);
   lines.push(`Skipped:           ${report.skipped}`);
-  lines.push(`Deprecated Removed: ${report.deprecatedRemoved}`);
   lines.push(`Errors:            ${report.errors}`);
   lines.push('');
   lines.push('───────────────────────────────────────────────────────────');
@@ -394,14 +322,12 @@ function generateReport(report: MigrationReport, dryRun: boolean): string {
   return lines.join('\n');
 }
 
-/**
- * Main migration function
- */
 async function main() {
   const args = process.argv.slice(2);
   const isForce = args.includes('--force');
   const isDryRun = !isForce;
   const isVerbose = args.includes('--verbose');
+  const workspaceRoot = process.env.CLAUDE_WS_USER_CWD || process.cwd();
 
   console.log('');
   console.log('🚀 Claude Workspace - All Projects Migration');
@@ -417,33 +343,27 @@ async function main() {
     console.log('');
   }
 
-  // Initialize services
-  const projectService = createProjectService(db);
-
-  // Get all projects
-  const projects = await projectService.list();
+  const targets = await getAllProjectTargets(workspaceRoot);
 
   const report: MigrationReport = {
-    totalProjects: projects.length,
+    totalProjects: targets.length,
     processed: 0,
     recreated: 0,
     upgraded: 0,
     skipped: 0,
     errors: 0,
-    deprecatedRemoved: 0,
-    results: []
+    results: [],
   };
 
-  console.log(`Found ${projects.length} projects`);
+  console.log(`Found ${targets.length} projects`);
   console.log('');
 
-  // Process each project
-  for (const project of projects) {
+  for (const target of targets) {
     if (isVerbose) {
-      console.log(`Processing: ${project.name} (${project.id})...`);
+      console.log(`Processing: ${target.name} (${target.id})...`);
     }
 
-    const result = await migrateProject(project, isForce);
+    const result = await migrateProject(target, isForce, workspaceRoot);
     report.results.push(result);
     report.processed++;
 
@@ -455,11 +375,6 @@ async function main() {
       report.recreated++;
     } else if (result.status === 'upgraded') {
       report.upgraded++;
-
-      // Check if deprecated variables were removed
-      if (result.actions.some(a => a.includes('Removed deprecated'))) {
-        report.deprecatedRemoved++;
-      }
     }
 
     if (isVerbose) {
@@ -472,11 +387,9 @@ async function main() {
     }
   }
 
-  // Print report
   console.log('');
   console.log(generateReport(report, isDryRun));
 
-  // Summary
   console.log('═══════════════════════════════════════════════════════════');
   console.log('📊 Summary');
   console.log('═══════════════════════════════════════════════════════════');
@@ -485,7 +398,6 @@ async function main() {
   console.log(`Recreated:           ${report.recreated}`);
   console.log(`Upgraded:            ${report.upgraded}`);
   console.log(`Skipped:             ${report.skipped}`);
-  console.log(`Deprecated Removed:  ${report.deprecatedRemoved}`);
   console.log(`Errors:              ${report.errors}`);
   console.log('');
 
@@ -497,22 +409,14 @@ async function main() {
   } else {
     console.log('✅ Migration completed!');
     console.log('');
-    console.log('📝 Next steps:');
-    console.log('   1. Test hooks on a few projects');
-    console.log('   2. Verify hook.env files are correct');
-    console.log('   3. Restart server if needed');
-    console.log('   4. Monitor for any issues');
-    console.log('');
   }
 
-  // Exit with error code if there were errors
   if (report.errors > 0) {
     process.exit(1);
   }
 }
 
-// Run migration
-main().catch(error => {
+main().catch((error) => {
   console.error('❌ Migration failed:', error);
   process.exit(1);
 });
