@@ -3,10 +3,9 @@
  * Migrate existing projects to current default Claude workspace structure.
  *
  * What it does per project:
- * - Ensures `.claude/hooks` and `.claude/commands` exist
- * - Syncs hook templates (`minio-pull-sync.ts`, `minio-push-sync.ts`)
- * - Ensures `.claude/hooks/.env.example`, `.claude/settings.json`, `.claude/CLAUDE.md`
- * - Creates `.claude/hooks/.env` when missing
+ * - Syncs hook templates (`minio-pull-sync.ts`, `minio-push-sync.ts`) with injected project id
+ * - Syncs `.claude/settings.json` and `.claude/CLAUDE.md` from template
+ * - Removes legacy hook env files (`hook.env`, `.env`, `hook.env.example`, `.env.example`)
  *
  * Usage:
  *   pnpm projects:migrate:defaults
@@ -25,10 +24,24 @@ type ProjectTarget = {
 };
 
 function inferProjectIdFromDirName(dirName: string): string {
-  // Folders may be: "<projectId>" or "<projectId>-<name>"
   const firstDash = dirName.indexOf('-');
   if (firstDash <= 0) return dirName;
   return dirName.slice(0, firstDash);
+}
+
+function removeLegacyHookEnvFiles(projectPath: string): number {
+  const hooksDir = path.join(projectPath, '.claude', 'hooks');
+  const legacyFiles = ['hook.env', '.env', 'hook.env.example', '.env.example'];
+  let removed = 0;
+
+  for (const fileName of legacyFiles) {
+    const filePath = path.join(hooksDir, fileName);
+    if (!fs.existsSync(filePath)) continue;
+    fs.rmSync(filePath, { force: true });
+    removed += 1;
+  }
+
+  return removed;
 }
 
 async function run(): Promise<void> {
@@ -40,7 +53,6 @@ async function run(): Promise<void> {
 
   const targets = new Map<string, ProjectTarget>();
 
-  // 1) Projects tracked in DB
   const dbProjects = db.select({
     id: schema.projects.id,
     path: schema.projects.path,
@@ -54,7 +66,6 @@ async function run(): Promise<void> {
     });
   }
 
-  // 2) Extra dirs under data/projects not present in DB
   if (fs.existsSync(projectsDir)) {
     const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -79,6 +90,7 @@ async function run(): Promise<void> {
   let ok = 0;
   let skipped = 0;
   let failed = 0;
+  let legacyRemoved = 0;
 
   for (const target of targets.values()) {
     try {
@@ -88,7 +100,9 @@ async function run(): Promise<void> {
         continue;
       }
 
-      await setupProjectDefaults(target.projectPath, target.id, workspaceRoot);
+      await setupProjectDefaults(target.projectPath, target.id, workspaceRoot, { useHookTemplate: true });
+      legacyRemoved += removeLegacyHookEnvFiles(target.projectPath);
+
       console.log(`[projects:migrate:defaults] OK ${target.source} id=${target.id} path=${target.projectPath}`);
       ok++;
     } catch (error) {
@@ -97,7 +111,7 @@ async function run(): Promise<void> {
     }
   }
 
-  console.log(`[projects:migrate:defaults] Done. ok=${ok} skipped=${skipped} failed=${failed}`);
+  console.log(`[projects:migrate:defaults] Done. ok=${ok} skipped=${skipped} failed=${failed} legacyRemoved=${legacyRemoved}`);
   if (failed > 0) process.exit(1);
 }
 

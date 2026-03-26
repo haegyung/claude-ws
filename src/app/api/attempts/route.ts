@@ -18,8 +18,9 @@ function getOrchestrator() {
     sessionManager,
     startAgent: (params) => agentManager.start(params),
     defaultBasePath: process.env.CLAUDE_WS_USER_CWD || /* turbopackIgnore: true */ process.cwd(),
-    onProjectForceCreated: async (project) => {
-      await setupProjectDefaults(project.path, project.id);
+    onProjectForceCreated: async (project, input) => {
+      const shouldUseHookTemplate = typeof input?.use_hook_template === 'boolean' ? input.use_hook_template : true;
+      await setupProjectDefaults(project.path, project.id, process.cwd(), { useHookTemplate: shouldUseHookTemplate });
     },
   });
 }

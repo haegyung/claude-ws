@@ -17,9 +17,14 @@ export async function GET() {
 // POST /api/projects - Create a new project
 export async function POST(request: NextRequest) {
   try {
-    const { id, name, path, projectId } = await request.json();
+    const { id, name, path, projectId, useHookTemplate, use_hook_template } = await request.json();
     const project = await projectService.createProject({ id: projectId || id, name, path });
-    await setupProjectDefaults(project.path, project.id);
+    const shouldUseHookTemplate = typeof useHookTemplate === 'boolean'
+      ? useHookTemplate
+      : typeof use_hook_template === 'boolean'
+        ? use_hook_template
+        : true;
+    await setupProjectDefaults(project.path, project.id, process.cwd(), { useHookTemplate: shouldUseHookTemplate });
     return NextResponse.json(project, { status: 201 });
   } catch (error: any) {
     if (error instanceof ProjectValidationError) {

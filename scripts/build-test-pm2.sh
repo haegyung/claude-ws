@@ -14,7 +14,17 @@ if [[ -n "${HEALTH_URL:-}" ]]; then
 else
   PORT_VALUE="${PORT:-8556}"
   if [[ -f .env ]]; then
-    ENV_PORT="$(grep -E '^PORT=' .env | tail -n1 | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)"
+    ENV_PORT="$(
+      awk -F '=' '
+        /^[[:space:]]*(export[[:space:]]+)?PORT[[:space:]]*=/ {
+          sub(/^[[:space:]]*(export[[:space:]]+)?PORT[[:space:]]*=[[:space:]]*/, "", $0)
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+          gsub(/^["'"'"']|["'"'"']$/, "", $0)
+          gsub(/\r/, "", $0)
+          print $0
+        }
+      ' .env | tail -n1
+    )"
     if [[ -n "$ENV_PORT" ]]; then
       PORT_VALUE="$ENV_PORT"
     fi
@@ -37,7 +47,7 @@ need_cmd pm2
 need_cmd curl
 
 echo "📦 Building project..."
-$BUILD_CMD
+bash -lc "$BUILD_CMD"
 
 echo "🚀 Starting/Restarting PM2 app: $APP_NAME"
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then

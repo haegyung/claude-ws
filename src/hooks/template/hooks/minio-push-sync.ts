@@ -1,10 +1,62 @@
 import fs from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
-
-// Load .env from .claude/hooks/ directory
 import { config as dotenvConfig } from "dotenv";
-const hooksDir = path.join(process.cwd(), ".claude", "hooks");
-dotenvConfig({ path: path.join(hooksDir, ".env") });
+
+const PROJECT_ID = "__PROJECT_ID__";
+
+function resolveRoomTemplate(value: string, projectId: string): string {
+  const trimmed = value.trim().replace(/^"|"$/g, "");
+  if (!trimmed) return "";
+  if (!projectId) return trimmed;
+  return trimmed
+    .replace(/\{room_id\}/gi, projectId)
+    .replace(/room_id/gi, projectId);
+}
+
+function resolveApiHookUrl(projectId: string): string {
+  const domainTemplate = process.env.API_HOOK_URL_DOMAIN || "";
+  if (domainTemplate.trim()) {
+    return resolveRoomTemplate(domainTemplate, projectId);
+  }
+
+  const explicit = process.env.API_HOOK_URL || "";
+  if (explicit.trim()) {
+    return resolveRoomTemplate(explicit, projectId);
+  }
+
+  const local = process.env.API_HOOK_URL_LOCAL || "";
+  if (local.trim()) {
+    return resolveRoomTemplate(local, projectId);
+  }
+
+  return "";
+}
+
+function findWorkspaceRoot(startPath: string = process.cwd()): string {
+  const explicitRoot = process.env.CLAUDE_WS_USER_CWD;
+  if (explicitRoot && existsSync(path.join(explicitRoot, ".env"))) {
+    return explicitRoot;
+  }
+
+  let current = path.resolve(startPath);
+  while (true) {
+    if (existsSync(path.join(current, ".env"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return explicitRoot || process.cwd();
+}
+
+function loadRootEnv(startPath: string = process.cwd()): void {
+  const workspaceRoot = findWorkspaceRoot(startPath);
+  const envPath = path.join(workspaceRoot, ".env");
+  if (existsSync(envPath)) {
+    dotenvConfig({ path: envPath, override: false });
+  }
+}
 
 /** Simple concurrency limiter — avoids p-limit dependency */
 function createConcurrencyLimit(concurrency: number) {
@@ -32,21 +84,35 @@ function createConcurrencyLimit(concurrency: number) {
 // ==========================================
 // CONFIGURATION
 // ==========================================
-const config = {
-    apiBaseUrl: process.env.API_HOOK_URL as string,
-    apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
-    apiQueueUrl: (process.env.API_QUEUE_URL || process.env.CLAUDE_WS_API_BASE_URL || "").trim(),
-    apiQueueFallbackUrls: (process.env.API_QUEUE_FALLBACK_URLS || "").trim(),
-    apiQueueKey: (process.env.API_HOOK_KEY || process.env.API_ACCESS_KEY || "").trim(),
-    appPort: (process.env.PORT || "").trim(),
-    queueHost: (process.env.API_QUEUE_HOST || "localhost").trim(),
-    projectId: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
-    targetPrefix: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
+let config: {
+    apiBaseUrl: string;
+    apiHookApiKey: string;
+    apiQueueUrl: string;
+    apiQueueKey: string;
+    appPort: string;
+    projectId: string;
+    targetPrefix: string;
 };
 
-if (!config.apiBaseUrl) {
-    console.error("❌ Missing API_HOOK_URL in .env!");
-    process.exit(1);
+function initializeRuntimeConfig() {
+    loadRootEnv(process.cwd());
+    const queuePort = (process.env.PORT || "").trim();
+    const apiQueueUrl = (queuePort ? `http://localhost:${queuePort}` : "").trim();
+
+    config = {
+        apiBaseUrl: resolveApiHookUrl(PROJECT_ID),
+        apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
+        apiQueueUrl,
+        apiQueueKey: (process.env.API_ACCESS_KEY || "").trim(),
+        appPort: queuePort,
+        projectId: PROJECT_ID,
+        targetPrefix: PROJECT_ID,
+    };
+
+    if (!config.apiBaseUrl) {
+        console.error("❌ Missing API_HOOK_URL in workspace root .env!");
+        process.exit(1);
+    }
 }
 
 // Temporary directory configuration
@@ -92,15 +158,7 @@ function buildQueueCandidates(): string[] {
 
     // Default queue endpoint: localhost + PORT from environment
     if (!config.apiQueueUrl && config.appPort) {
-        push(`http://${config.queueHost}:${config.appPort}`);
-    }
-
-    // Optional comma-separated list of extra queue base URLs/endpoints
-    if (config.apiQueueFallbackUrls) {
-        for (const raw of config.apiQueueFallbackUrls.split(",")) {
-            const value = raw.trim();
-            if (value) push(value);
-        }
+        push(`http://localhost:${config.appPort}`);
     }
 
     // Last fallback: same origin as sync API base
@@ -221,6 +279,8 @@ async function scanDirectory(dir: string, fileList: string[] = []) {
 // MAIN SYNC FUNCTION
 // ==========================================
 async function runCheck() {
+    initializeRuntimeConfig();
+
     // Preferred path: enqueue into server-side push queue (records jobs in push-sync-state.db)
     const enqueued = await enqueuePushJob();
     if (enqueued) {

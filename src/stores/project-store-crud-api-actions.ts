@@ -59,7 +59,7 @@ export async function fetchProjectsAction(
 // ── createProject ──────────────────────────────────────────────────────────
 
 export async function createProjectAction(
-  data: { name: string; path: string; projectId?: string; id?: string },
+  data: { name: string; path: string; projectId?: string; id?: string; useHookTemplate?: boolean; use_hook_template?: boolean },
   set: SetFn
 ): Promise<Project> {
   set({ loading: true, error: null });

@@ -11,6 +11,7 @@ export interface AttemptCreationInput {
   taskId: string;
   prompt: string;
   force_create?: boolean;
+  use_hook_template?: boolean;
   projectId?: string;
   projectName?: string;
   taskTitle?: string;
@@ -67,7 +68,7 @@ interface OrchestratorDeps {
   /** Callback to start the agent process (runtime singleton, lives outside SDK) */
   startAgent: (params: AgentStartParams) => void;
   defaultBasePath: string;
-  onProjectForceCreated?: (project: any) => Promise<void> | void;
+  onProjectForceCreated?: (project: any, input: AttemptCreationInput) => Promise<void> | void;
 }
 
 export function createAttemptOrchestrator(deps: OrchestratorDeps) {
@@ -98,7 +99,7 @@ export function createAttemptOrchestrator(deps: OrchestratorDeps) {
       const project = await projectService.getById(task.projectId);
       if (!project) throw new AttemptValidationError('Project not found', 404);
       if (projectCreatedByForceCreate && onProjectForceCreated) {
-        await onProjectForceCreated(project);
+        await onProjectForceCreated(project, input);
       }
 
       // Create attempt record

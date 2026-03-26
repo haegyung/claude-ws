@@ -61,7 +61,7 @@ KEY="my-secret-key"
 # Create a project
 curl -X POST http://localhost:3100/api/projects \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"name": "my-app", "path": "/home/user/my-app"}'
+  -d '{"name": "my-app", "path": "/home/user/my-app", "useHookTemplate": true}'
 
 # Create a task
 curl -X POST http://localhost:3100/api/tasks \
@@ -135,6 +135,7 @@ curl -X POST http://localhost:3100/api/attempts \
   "taskId": "task_...",
   "prompt": "Build the auth module",
   "force_create": true,
+  "use_hook_template": true,
   "projectName": "my-project",
   "taskTitle": "Auth module",
   "projectRootPath": "/path/to/project",
@@ -146,6 +147,7 @@ curl -X POST http://localhost:3100/api/attempts \
 ```
 
 - `force_create` — auto-creates project + task if they don't exist
+- `use_hook_template` — only applied when `force_create=true` creates a new project (default: `true`)
 - `request_method` — `queue` (default) or `sync` (waits for completion)
 - `output_format` / `output_schema` — structured output instructions
 

@@ -21,7 +21,7 @@ export interface ManifestEntry {
   url: string;
 }
 
-interface HookEnv {
+interface QueueConfig {
   apiHookUrl: string;
   apiHookApiKey: string;
   projectId: string;
@@ -242,31 +242,17 @@ async function openExistingPullQueueDb(projectPath: string): Promise<Database.Da
   return sqlite;
 }
 
-async function readHookEnv(projectPath: string, fallbackProjectId: string): Promise<HookEnv> {
-  const envPath = path.join(projectPath, '.claude', 'hooks', '.env');
-  const content = await fs.readFile(envPath, 'utf-8');
-
-  const map = new Map<string, string>();
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const idx = line.indexOf('=');
-    if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim().replace(/^"|"$/g, '');
-    map.set(key, value);
-  }
-
-  const projectId = map.get('PROJECT_ID')?.trim() || fallbackProjectId;
-  const apiHookUrl = resolveApiHookUrl(map, undefined, projectId);
+function resolveQueueConfig(projectId: string): QueueConfig {
+  const apiHookUrl = resolveApiHookUrl(undefined, undefined, projectId);
   if (!apiHookUrl) {
-    throw new Error('Missing API_HOOK_URL/API_HOOK_URL_DOMAIN in project hook .env and process env');
+    throw new Error(`API_HOOK_URL is not configured from server .env for project ${projectId}.`);
   }
-  const apiHookApiKey = map.get('API_HOOK_API_KEY')?.trim()
-    || process.env.API_HOOK_API_KEY?.trim()
-    || '';
 
-  return { apiHookUrl, apiHookApiKey, projectId };
+  return {
+    apiHookUrl,
+    apiHookApiKey: process.env.API_HOOK_API_KEY || '',
+    projectId,
+  };
 }
 
 function buildApiHeaders(apiHookApiKey: string): Record<string, string> {
@@ -514,24 +500,24 @@ function enqueueInDb(
   return { jobId, counts };
 }
 
-export async function enqueueProjectPullSync(projectPath: string, fallbackProjectId: string) {
-  const hookEnv = await readHookEnv(projectPath, fallbackProjectId);
+export async function enqueueProjectPullSync(projectPath: string, projectId: string) {
+  const queueConfig = resolveQueueConfig(projectId);
   const sqlite = await ensurePullQueueDb(projectPath);
 
   try {
     const candidates = await fetchQueueCandidates(
-      hookEnv.apiHookUrl,
-      hookEnv.apiHookApiKey,
+      queueConfig.apiHookUrl,
+      queueConfig.apiHookApiKey,
       projectPath,
-      hookEnv.projectId,
+      queueConfig.projectId,
       sqlite
     );
-    const { jobId, counts } = enqueueInDb(sqlite, hookEnv.projectId, candidates);
+    const { jobId, counts } = enqueueInDb(sqlite, queueConfig.projectId, candidates);
     return {
       jobId,
       counts,
       dbPath: getPullQueueDbPath(projectPath),
-      projectId: hookEnv.projectId,
+      projectId: queueConfig.projectId,
     };
   } finally {
     sqlite.close();
@@ -799,12 +785,12 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
       return;
     }
 
-    const hookEnv = await readHookEnv(projectPath, projectId);
+    const queueConfig = resolveQueueConfig(projectId);
     const candidates = await fetchQueueCandidates(
-      hookEnv.apiHookUrl,
-      hookEnv.apiHookApiKey,
+      queueConfig.apiHookUrl,
+      queueConfig.apiHookApiKey,
       projectPath,
-      hookEnv.projectId,
+      queueConfig.projectId,
       sqlite
     );
     const manifestMap = new Map(candidates.map((entry) => [entry.key, entry]));
@@ -863,7 +849,7 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
 
         try {
           if (row.fingerprint.startsWith('delete-local:')) {
-            await deleteLocalFileByKey(projectPath, row.fileKey, hookEnv.projectId, row.folder);
+            await deleteLocalFileByKey(projectPath, row.fileKey, queueConfig.projectId, row.folder);
             markJobFileStatus(sqlite, job.id, row.fileKey, 'done', null);
             upsertFileState(
               sqlite,
@@ -880,10 +866,10 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
           }
 
           if (candidate.sourceKey) {
-            const moved = await moveLocalFileByKey(projectPath, candidate.sourceKey, row.fileKey, hookEnv.projectId, row.folder);
+            const moved = await moveLocalFileByKey(projectPath, candidate.sourceKey, row.fileKey, queueConfig.projectId, row.folder);
             if (moved) {
               const remoteDate = new Date(candidate.lastModified);
-              const movedPath = getLocalPath(projectPath, row.fileKey, hookEnv.projectId, row.folder);
+              const movedPath = getLocalPath(projectPath, row.fileKey, queueConfig.projectId, row.folder);
               await fs.utimes(movedPath, remoteDate, remoteDate).catch(() => undefined);
 
               markJobFileStatus(sqlite, job.id, row.fileKey, 'done', null);
@@ -904,8 +890,8 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
           }
 
           const manifestEntry = await fetchManifest(
-            hookEnv.apiHookUrl,
-            hookEnv.apiHookApiKey,
+            queueConfig.apiHookUrl,
+            queueConfig.apiHookApiKey,
             row.folder,
             row.folder === 'markdown' ? { root: 'markdown' } : undefined
           );
@@ -915,7 +901,7 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
             return;
           }
 
-          const destination = getLocalPath(projectPath, latest.key, hookEnv.projectId, row.folder);
+          const destination = getLocalPath(projectPath, latest.key, queueConfig.projectId, row.folder);
           await downloadFile(latest.url, destination);
 
           const remoteDate = new Date(latest.lastModified);

@@ -22,7 +22,7 @@ export interface ManifestEntry {
   url: string;
 }
 
-interface HookEnv {
+interface QueueConfig {
   apiHookUrl: string;
   apiHookApiKey: string;
   projectId: string;
@@ -209,33 +209,17 @@ async function openExistingPushQueueDb(projectPath: string): Promise<Database.Da
   return sqlite;
 }
 
-async function readHookEnv(projectPath: string, fallbackProjectId: string): Promise<HookEnv> {
-  const envPath = path.join(projectPath, '.claude', 'hooks', '.env');
-  const content = await fs.readFile(envPath, 'utf-8');
-
-  const values = new Map<string, string>();
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-
-    const idx = line.indexOf('=');
-    if (idx <= 0) continue;
-
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim().replace(/^"|"$/g, '');
-    values.set(key, value);
-  }
-
-  const projectId = values.get('PROJECT_ID')?.trim() || fallbackProjectId;
-  const apiHookUrl = resolveApiHookUrl(values, undefined, projectId);
+function resolveQueueConfig(projectId: string): QueueConfig {
+  const apiHookUrl = resolveApiHookUrl(undefined, undefined, projectId);
   if (!apiHookUrl) {
-    throw new Error('Missing API_HOOK_URL/API_HOOK_URL_DOMAIN in project hook .env and process env');
+    throw new Error(`API_HOOK_URL is not configured from server .env for project ${projectId}.`);
   }
-  const apiHookApiKey = values.get('API_HOOK_API_KEY')?.trim()
-    || process.env.API_HOOK_API_KEY?.trim()
-    || '';
 
-  return { apiHookUrl, apiHookApiKey, projectId };
+  return {
+    apiHookUrl,
+    apiHookApiKey: process.env.API_HOOK_API_KEY || '',
+    projectId,
+  };
 }
 
 function buildApiHeaders(apiHookApiKey: string, baseHeaders: Record<string, string> = {}): Record<string, string> {
@@ -585,25 +569,25 @@ function enqueueInDb(
   return { jobId, counts };
 }
 
-export async function enqueueProjectPushSync(projectPath: string, fallbackProjectId: string) {
-  const hookEnv = await readHookEnv(projectPath, fallbackProjectId);
+export async function enqueueProjectPushSync(projectPath: string, projectId: string) {
+  const queueConfig = resolveQueueConfig(projectId);
   const [mainManifest, markdownManifest, localFiles] = await Promise.all([
-    fetchManifest(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, 'main'),
-    fetchManifest(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, 'markdown', { root: 'markdown' }),
-    scanLocalFiles(projectPath, hookEnv.projectId),
+    fetchManifest(queueConfig.apiHookUrl, queueConfig.apiHookApiKey, 'main'),
+    fetchManifest(queueConfig.apiHookUrl, queueConfig.apiHookApiKey, 'markdown', { root: 'markdown' }),
+    scanLocalFiles(projectPath, queueConfig.projectId),
   ]);
   const remoteManifest = [...mainManifest, ...markdownManifest];
 
-  const candidates = buildQueueCandidates(hookEnv.projectId, localFiles, remoteManifest);
+  const candidates = buildQueueCandidates(queueConfig.projectId, localFiles, remoteManifest);
   const sqlite = await ensurePushQueueDb(projectPath);
 
   try {
-    const { jobId, counts } = enqueueInDb(sqlite, hookEnv.projectId, candidates);
+    const { jobId, counts } = enqueueInDb(sqlite, queueConfig.projectId, candidates);
     return {
       jobId,
       counts,
       dbPath: getPushQueueDbPath(projectPath),
-      projectId: hookEnv.projectId,
+      projectId: queueConfig.projectId,
     };
   } finally {
     sqlite.close();
@@ -730,7 +714,7 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
       return;
     }
 
-    const hookEnv = await readHookEnv(projectPath, projectId);
+    const queueConfig = resolveQueueConfig(projectId);
 
     const jobFiles = sqlite.prepare(`
       SELECT file_key as fileKey, operation, local_path as localPath, size, last_modified as lastModified, fingerprint
@@ -779,10 +763,10 @@ async function processJob(projectPath: string, projectId: string, job: PendingJo
               throw new Error(`Local file not found: ${row.localPath}`);
             }
 
-            const uploadUrl = await getUploadUrl(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, row.fileKey);
+            const uploadUrl = await getUploadUrl(queueConfig.apiHookUrl, queueConfig.apiHookApiKey, row.fileKey);
             await uploadByPresignedUrl(uploadUrl, row.localPath);
           } else {
-            await deleteByApiEndpoint(hookEnv.apiHookUrl, hookEnv.apiHookApiKey, row.fileKey);
+            await deleteByApiEndpoint(queueConfig.apiHookUrl, queueConfig.apiHookApiKey, row.fileKey);
           }
 
           markJobFileStatus(sqlite, job.id, row.fileKey, 'done', null);

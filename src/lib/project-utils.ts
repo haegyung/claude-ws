@@ -1,9 +1,7 @@
 import { join } from 'path';
-import { mkdir, writeFile, access, copyFile, readFile, chmod } from 'fs/promises';
-import { spawn } from 'child_process';
+import { mkdir, writeFile, access, copyFile, readFile } from 'fs/promises';
 
 import { sanitizeDirName } from './file-utils';
-import { resolveApiHookUrl } from './api-hook-url';
 
 /**
  * Generates a unique, non-colliding absolute directory path for a project name.
@@ -42,9 +40,15 @@ export async function getUniqueProjectPath(baseDir: string, projectName: string)
  * @param projectPath The absolute path of the new project
  * @param projectId Optional project ID used for hook targetPrefix/PROJECT_ID
  */
-export async function setupProjectDefaults(projectPath: string, projectId?: string, workspaceRoot: string = process.cwd()): Promise<void> {
+export async function setupProjectDefaults(
+    projectPath: string,
+    projectId?: string,
+    workspaceRoot: string = process.cwd(),
+    options?: { useHookTemplate?: boolean }
+): Promise<void> {
     try {
         const resolvedProjectId = projectId || '__PROJECT_ID__';
+        const useHookTemplate = options?.useHookTemplate ?? true;
         // 1. Create .claude/hooks and commands directories
         const claudeDir = join(projectPath, '.claude');
         const hooksDir = join(claudeDir, 'hooks');
@@ -72,46 +76,25 @@ export async function setupProjectDefaults(projectPath: string, projectId?: stri
 
         // 3. Copy hook and settings templates
 
-        try {
-            const pullSyncPath = join(templateHooksDir, 'hooks', 'minio-pull-sync.ts');
-            let pullSyncContent = await readFile(pullSyncPath, 'utf-8');
-            pullSyncContent = pullSyncContent.replace(/__PROJECT_ID__/g, resolvedProjectId);
-            await writeFile(join(hooksDir, 'minio-pull-sync.ts'), pullSyncContent, 'utf-8');
-
-            const pushSyncPath = join(templateHooksDir, 'hooks', 'minio-push-sync.ts');
-            let pushSyncContent = await readFile(pushSyncPath, 'utf-8');
-            pushSyncContent = pushSyncContent.replace(/__PROJECT_ID__/g, resolvedProjectId);
-            await writeFile(join(hooksDir, 'minio-push-sync.ts'), pushSyncContent, 'utf-8');
-
-            const envExamplePath = join(hooksDir, '.env.example');
+        if (useHookTemplate) {
             try {
-                await access(envExamplePath);
-            } catch {
+                const pullSyncPath = join(templateHooksDir, 'hooks', 'minio-pull-sync.ts');
+                let pullSyncContent = await readFile(pullSyncPath, 'utf-8');
+                pullSyncContent = pullSyncContent.replace(/__PROJECT_ID__/g, resolvedProjectId);
+                await writeFile(join(hooksDir, 'minio-pull-sync.ts'), pullSyncContent, 'utf-8');
+
+                const pushSyncPath = join(templateHooksDir, 'hooks', 'minio-push-sync.ts');
+                let pushSyncContent = await readFile(pushSyncPath, 'utf-8');
+                pushSyncContent = pushSyncContent.replace(/__PROJECT_ID__/g, resolvedProjectId);
+                await writeFile(join(hooksDir, 'minio-push-sync.ts'), pushSyncContent, 'utf-8');
+
                 await copyFile(
-                    join(templateHooksDir, 'hooks', '.env.example'),
-                    envExamplePath
+                    join(templateHooksDir, 'settings.json'),
+                    join(claudeDir, 'settings.json')
                 );
+            } catch (e) {
+                console.error('[project-utils] Failed to copy hook templates for new project', e);
             }
-
-            await copyFile(
-                join(templateHooksDir, 'settings.json'),
-                join(claudeDir, 'settings.json')
-            );
-        } catch (e) {
-            console.error('[project-utils] Failed to copy hook templates for new project', e);
-        }
-
-        // 3. Generate local .env file for the sync hooks in .claude/hooks/
-        const envPath = join(hooksDir, '.env');
-        try {
-            await access(envPath);
-        } catch {
-            const apiBase = resolveApiHookUrl(undefined, undefined, projectId);
-            const apiHookApiKey = process.env.API_HOOK_API_KEY?.trim() || '';
-            const projectIdEnvLine = projectId ? `PROJECT_ID="${projectId}"\n` : '';
-            const apiKeyEnvLine = apiHookApiKey ? `API_HOOK_API_KEY="${apiHookApiKey}"\n` : '';
-            const envContent = `API_HOOK_URL="${apiBase}"\n${apiKeyEnvLine}${projectIdEnvLine}`;
-            await writeFile(envPath, envContent, 'utf-8');
         }
     } catch (e) {
         console.error('[project-utils] Error setting up project defaults:', e);

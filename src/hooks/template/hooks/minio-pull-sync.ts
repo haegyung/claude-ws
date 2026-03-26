@@ -1,24 +1,86 @@
 import fs from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { randomUUID } from "crypto";
-
-// Load .env from .claude/hooks/ directory
 import { config as dotenvConfig } from "dotenv";
-const hooksDir = path.join(process.cwd(), ".claude", "hooks");
-dotenvConfig({ path: path.join(hooksDir, ".env") });
 
-const config = {
-  apiBaseUrl: process.env.API_HOOK_URL as string,
-  apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
-  projectId: (process.env.PROJECT_ID || "__PROJECT_ID__") as string,
-};
+const PROJECT_ID = "__PROJECT_ID__";
 
-if (!config.apiBaseUrl) {
-  console.error("❌ Missing API_HOOK_URL in .env!");
-  process.exit(1);
+function resolveRoomTemplate(value: string, projectId: string): string {
+  const trimmed = value.trim().replace(/^"|"$/g, "");
+  if (!trimmed) return "";
+  if (!projectId) return trimmed;
+  return trimmed
+    .replace(/\{room_id\}/gi, projectId)
+    .replace(/room_id/gi, projectId);
 }
 
+function resolveApiHookUrl(projectId: string): string {
+  const domainTemplate = process.env.API_HOOK_URL_DOMAIN || "";
+  if (domainTemplate.trim()) {
+    return resolveRoomTemplate(domainTemplate, projectId);
+  }
+
+  const explicit = process.env.API_HOOK_URL || "";
+  if (explicit.trim()) {
+    return resolveRoomTemplate(explicit, projectId);
+  }
+
+  const local = process.env.API_HOOK_URL_LOCAL || "";
+  if (local.trim()) {
+    return resolveRoomTemplate(local, projectId);
+  }
+
+  return "";
+}
+
+function findWorkspaceRoot(startPath: string = process.cwd()): string {
+  const explicitRoot = process.env.CLAUDE_WS_USER_CWD;
+  if (explicitRoot && existsSync(path.join(explicitRoot, ".env"))) {
+    return explicitRoot;
+  }
+
+  let current = path.resolve(startPath);
+  while (true) {
+    if (existsSync(path.join(current, ".env"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return explicitRoot || process.cwd();
+}
+
+function loadRootEnv(startPath: string = process.cwd()): void {
+  const workspaceRoot = findWorkspaceRoot(startPath);
+  const envPath = path.join(workspaceRoot, ".env");
+  if (existsSync(envPath)) {
+    dotenvConfig({ path: envPath, override: false });
+  }
+}
+
+let config: {
+  apiBaseUrl: string;
+  apiHookApiKey: string;
+  projectId: string;
+};
+
+function initializeRuntimeConfig() {
+  loadRootEnv(process.cwd());
+  config = {
+    apiBaseUrl: resolveApiHookUrl(PROJECT_ID),
+    apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
+    projectId: PROJECT_ID,
+  };
+
+  if (!config.apiBaseUrl) {
+    console.error("❌ Missing API_HOOK_URL in workspace root .env!");
+    process.exit(1);
+  }
+}
+
+const hooksDir = path.join(process.cwd(), ".claude", "hooks");
 const PULL_DB_PATH = path.join(hooksDir, "pull-sync-state.db");
 const TMP_DIR = path.join(process.cwd(), ".claude", "tmp");
 const PUSH_STATE_FILE = path.join(TMP_DIR, "local-sync-state.json");
@@ -57,6 +119,19 @@ interface QueueFileCandidate {
 function buildFingerprint(entry: Pick<ManifestEntry, "size" | "lastModified" | "eTag">): string {
   const eTag = String(entry.eTag || "").trim();
   return eTag.length > 0 ? eTag : `${entry.size}:${entry.lastModified}`;
+}
+
+function getLocalPathFromKey(fileKey: string, folder: FolderType): string {
+  const mainPrefix = `${config.projectId}/`;
+  const markdownPrefix = `markdown/${config.projectId}/`;
+
+  if (folder === "main") {
+    const relative = fileKey.startsWith(mainPrefix) ? fileKey.slice(mainPrefix.length) : fileKey;
+    return path.join(process.cwd(), relative);
+  }
+
+  const markdownRelative = fileKey.startsWith(markdownPrefix) ? fileKey.slice(markdownPrefix.length) : fileKey;
+  return path.join(process.cwd(), "markdown", markdownRelative);
 }
 
 async function ensurePullDb(): Promise<Database.Database> {
@@ -121,7 +196,7 @@ async function fetchManifest(label: string, options?: { root?: "markdown"; allow
   const url = root ? buildApiUrl(`manifest?root=${encodeURIComponent(root)}`) : buildApiUrl("manifest");
   const response = await fetch(url, { headers: buildApiHeaders() });
 
-  if (response.status === 404 && allowNotFound) {
+  if ((response.status === 404 || response.status === 400) && allowNotFound) {
     console.error(`ℹ️ ${label} not found on remote, treating as empty manifest.`);
     return [];
   }
@@ -224,17 +299,20 @@ function enqueueCandidates(
       }
 
       if (state?.status === "done" && state.fingerprint === candidate.fingerprint) {
-        skippedFiles += 1;
-        insertJobFileStmt.run(
-          jobId,
-          candidate.key,
-          candidate.folder,
-          candidate.fingerprint,
-          "skipped",
-          "Skipped: already done with same fingerprint",
-          now
-        );
-        continue;
+        const localPath = getLocalPathFromKey(candidate.key, candidate.folder);
+        if (existsSync(localPath)) {
+          skippedFiles += 1;
+          insertJobFileStmt.run(
+            jobId,
+            candidate.key,
+            candidate.folder,
+            candidate.fingerprint,
+            "skipped",
+            "Skipped: already done with same fingerprint",
+            now
+          );
+          continue;
+        }
       }
 
       enqueuedFiles += 1;
@@ -262,6 +340,8 @@ function enqueueCandidates(
 async function runEnqueue() {
   let sqlite: Database.Database | null = null;
   try {
+    initializeRuntimeConfig();
+
     console.error("\n=================== ENQUEUE MINIO PULL JOB ===================");
     const { candidates, manifestData } = await getQueueCandidates();
     await writePushStateFile(manifestData);

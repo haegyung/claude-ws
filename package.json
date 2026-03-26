@@ -1,6 +1,6 @@
 {
   "name": "claude-ws",
-  "version": "0.4.9-beta.7",
+  "version": "0.4.9-beta.3",
   "private": false,
   "description": "AI-powered workspace for solo CEOs and indie builders — manage your entire business with AI agents, not just code. Kanban board, code editor, Git integration, claw agent hub, local-first SQLite.",
   "keywords": [
@@ -67,7 +67,9 @@
   },
   "pnpm": {
     "overrides": {
-      "axios": "0.30.3"
+      "axios": "0.30.3",
+      "picomatch@^2.3.1": "2.3.2",
+      "picomatch@^4.0.0": "4.0.4"
     },
     "onlyBuiltDependencies": [
       "@parcel/watcher",
@@ -95,7 +97,10 @@
     "db:fix": "tsx scripts/db-fix-columns.ts",
     "db:migrate:health": "tsx scripts/db-migrate-health.ts",
     "projects:migrate:defaults": "tsx scripts/migrate-existing-projects.ts",
-    "migrate:sessions": "tsx scripts/migrate-sdk-sessions.ts"
+    "migrate:sessions": "tsx scripts/migrate-sdk-sessions.ts",
+    "migrate-hook-env": "tsx scripts/migrate-hook-env.ts",
+    "migrate-all-projects": "tsx scripts/migrate-all-projects.ts",
+    "heal-hooks": "tsx scripts/heal-hook-env.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.81",
@@ -164,7 +169,6 @@
     "diff": "^8.0.3",
     "dompurify": "^3.3.3",
     "dotenv": "^17.3.1",
-    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.1",
@@ -205,6 +209,8 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9"
+    "@tailwindcss/oxide-linux-x64-musl": "4.2.2",
+    "@types/js-yaml": "^4.0.9",
+    "drizzle-kit": "^0.31.10"
   }
 }
