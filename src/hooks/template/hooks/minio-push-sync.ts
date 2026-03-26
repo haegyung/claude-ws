@@ -89,7 +89,6 @@ let config: {
     apiHookApiKey: string;
     apiQueueUrl: string;
     apiQueueKey: string;
-    appPort: string;
     projectId: string;
     targetPrefix: string;
 };
@@ -104,7 +103,6 @@ function initializeRuntimeConfig() {
         apiHookApiKey: (process.env.API_HOOK_API_KEY || "").trim(),
         apiQueueUrl,
         apiQueueKey: (process.env.API_ACCESS_KEY || "").trim(),
-        appPort: queuePort,
         projectId: PROJECT_ID,
         targetPrefix: PROJECT_ID,
     };
@@ -151,22 +149,9 @@ function buildQueueCandidates(): string[] {
         }
     };
 
-    // Highest priority: explicit queue base URL
+    // Queue endpoint is always local: localhost + PORT
     if (config.apiQueueUrl) {
         push(config.apiQueueUrl);
-    }
-
-    // Default queue endpoint: localhost + PORT from environment
-    if (!config.apiQueueUrl && config.appPort) {
-        push(`http://localhost:${config.appPort}`);
-    }
-
-    // Last fallback: same origin as sync API base
-    try {
-        const origin = new URL(config.apiBaseUrl).origin;
-        push(origin);
-    } catch {
-        // ignore invalid URL
     }
 
     return candidates;
