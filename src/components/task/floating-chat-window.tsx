@@ -41,7 +41,9 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
   const [editTitleValue, setEditTitleValue] = useState('');
 
   const promptInputRef = useRef<PromptInputRef>(null);
-  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleInputRef = useRef<HTMLTextAreaElement>(null);
+  const titleSpanRef = useRef<HTMLSpanElement>(null);
+  const [titleMinWidth, setTitleMinWidth] = useState(0);
 
   const { messages, cancelAttempt, isRunning, currentAttemptId, currentPrompt, activeQuestion, answerQuestion, cancelQuestion, refetchQuestion, hasSentFirstMessage, currentAttemptFiles, handlePromptSubmit, handleInterruptAndSend } = useTaskAttemptStreamHandler(
     task.id,
@@ -131,9 +133,8 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
       storageKey={`chat-${task.id}`}
       titleCenter={
         isEditingTitle ? (
-          <input
+          <textarea
             ref={titleInputRef}
-            type="text"
             data-no-drag
             value={editTitleValue}
             onChange={(e) => setEditTitleValue(e.target.value)}
@@ -142,15 +143,17 @@ export function FloatingChatWindow({ task, zIndex, onClose, onMaximize, onFocus 
               if (e.key === 'Enter') { e.preventDefault(); handleSaveTitle(); }
               else if (e.key === 'Escape') { setIsEditingTitle(false); setEditTitleValue(''); }
             }}
-            className="text-sm font-medium w-full bg-transparent border-b border-primary/50 outline-none text-center"
+            className="text-sm font-medium bg-transparent border-b border-primary/50 outline-none text-center max-w-full resize-none overflow-hidden"
+            rows={Math.min(Math.ceil(editTitleValue.length / 30) || 1, 2)}
+            style={{ width: `${Math.min(Math.max(editTitleValue.length + 2, 8), 32)}ch`, minWidth: titleMinWidth > 0 ? `${titleMinWidth}px` : undefined }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           />
         ) : (
           <div className="flex items-center gap-1 cursor-grab active:cursor-grabbing">
-            <span className="line-clamp-2">{task.title}</span>
+            <span ref={titleSpanRef} className="line-clamp-2">{task.title}</span>
             <button
-              onClick={(e) => { e.stopPropagation(); setEditTitleValue(task.title); setIsEditingTitle(true); setTimeout(() => titleInputRef.current?.focus(), 0); }}
+              onClick={(e) => { e.stopPropagation(); setTitleMinWidth(titleSpanRef.current?.offsetWidth || 0); setEditTitleValue(task.title); setIsEditingTitle(true); setTimeout(() => titleInputRef.current?.focus(), 0); }}
               onMouseDown={(e) => e.stopPropagation()}
               className="p-0.5 hover:bg-accent rounded transition-colors shrink-0 cursor-pointer"
               data-no-drag

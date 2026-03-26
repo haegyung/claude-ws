@@ -5,9 +5,10 @@ echo "🔍 Checking dependencies for production build..."
 echo ""
 
 # Find all imports from source files
-echo "Scanning imports in src/, server.ts, drizzle.config.ts..."
+echo "Scanning imports in src/, server.ts, next.config.ts..."
 IMPORTS=$(find src -name "*.ts" -o -name "*.tsx" | xargs grep -h "^import.*from ['\"]" | sed -E "s/.*from ['\"]([^'\"\/]+).*/\1/" | sort -u)
-ROOT_IMPORTS=$(grep -h "^import.*from ['\"]" drizzle.config.ts next.config.ts server.ts 2>/dev/null | sed -E "s/.*from ['\"]([^'\"\/]+).*/\1/" | sort -u)
+# Exclude dev-only config files (drizzle.config.ts) — they only run during development
+ROOT_IMPORTS=$(grep -h "^import.*from ['\"]" next.config.ts server.ts 2>/dev/null | sed -E "s/.*from ['\"]([^'\"\/]+).*/\1/" | sort -u)
 
 ALL_IMPORTS=$(echo -e "$IMPORTS\n$ROOT_IMPORTS" | sort -u | grep -v "^\." | grep -v "^@/" | grep -v "^node:")
 

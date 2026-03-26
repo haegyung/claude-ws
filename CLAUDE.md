@@ -131,15 +131,18 @@ ALL traffic for these routes goes through agentic-sdk:
 
 ## Dependencies Management
 
-**CRITICAL: NO devDependencies - ONLY dependencies**
+**Runtime packages go in `dependencies`. Build/dev-only tools go in `devDependencies`.**
 
-- **NEVER** add packages to `devDependencies`
-- **ALWAYS** add ALL packages to `dependencies` only
-- This is a published npm package - all imports must be available in production
-- Production code imports from devDependencies will cause build failures
-- The `scripts/check-dependencies.sh` script validates this rule before builds
+- Packages imported by production code (`src/`, `server.ts`) **MUST** be in `dependencies`
+- Packages only used at dev time (CLI tools, type-only imports, code generators) **MAY** be in `devDependencies`
+- The `scripts/check-dependencies.sh` script validates no production code imports from `devDependencies`
+- When in doubt, put it in `dependencies`
 
-**Why:** When users install this package via npm, devDependencies are not installed. Any production code importing from devDependencies will fail at runtime.
+**Current devDependencies (approved):**
+- `@types/js-yaml` — type definitions only
+- `drizzle-kit` — CLI tool for `db:generate`, only type-imported in `drizzle.config.ts`
+
+**Why:** This is a published npm package. When users install via npm, `devDependencies` are not installed. Any runtime import from `devDependencies` will fail. Build/dev tools that are never imported at runtime are safe in `devDependencies`.
 
 ## Data Migrations (CRITICAL)
 

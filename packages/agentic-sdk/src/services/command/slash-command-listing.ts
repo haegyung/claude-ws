@@ -182,7 +182,12 @@ export function createCommandService() {
         }
       }
 
-      const all = [...BUILTIN_COMMANDS, ...userCommands, ...skills];
+      // Deduplicate: user commands and skills override built-ins with same name
+      const byName = new Map<string, CommandInfo>();
+      for (const cmd of [...BUILTIN_COMMANDS, ...userCommands, ...skills]) {
+        byName.set(cmd.name, cmd);
+      }
+      const all = Array.from(byName.values());
       all.sort((a, b) => a.name.localeCompare(b.name));
       return all;
     },
