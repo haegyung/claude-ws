@@ -12,6 +12,57 @@ import type { TerminalTab, TerminalInstanceActions } from './terminal-store';
 
 const log = createLogger('TerminalStore');
 
+// Characters that should flush the input buffer immediately (interactive signals)
+const IMMEDIATE_FLUSH = new Set([
+  '\r',    // Enter
+  '\n',    // Newline
+  '\x03',  // Ctrl+C
+  '\x04',  // Ctrl+D
+  '\x1a',  // Ctrl+Z
+  '\x1b',  // Escape (also prefix for arrow keys etc.)
+]);
+
+/**
+ * Batches individual keystrokes into micro-batched socket messages.
+ * Accumulates input for up to 16ms before flushing, unless an interactive
+ * control character is detected (Enter, Ctrl+C, etc.) which triggers immediate flush.
+ */
+export function createInputBuffer() {
+  const buffers = new Map<string, string>();
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flush() {
+    flushTimer = null;
+    for (const [terminalId, data] of buffers) {
+      getSocket().emit('terminal:input', { terminalId, data });
+    }
+    buffers.clear();
+  }
+
+  return {
+    send(terminalId: string, data: string) {
+      const existing = buffers.get(terminalId) || '';
+      buffers.set(terminalId, existing + data);
+
+      // Flush immediately for control characters
+      const needsImmediate = data.length === 1
+        ? IMMEDIATE_FLUSH.has(data)
+        : [...data].some((ch) => IMMEDIATE_FLUSH.has(ch));
+
+      if (needsImmediate) {
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+        flush();
+        return;
+      }
+
+      // Otherwise batch for one animation frame (~16ms)
+      if (!flushTimer) {
+        flushTimer = setTimeout(flush, 16);
+      }
+    },
+  };
+}
+
 /** Find the lowest available tab number (1-based) not already used by current tabs */
 export function nextAvailableTabNumber(tabs: TerminalTab[]): number {
   const usedNumbers = new Set(
@@ -68,17 +119,22 @@ export async function reconnectTabsAction(set: SetFn, get: GetFn): Promise<void>
   const socket = getSocket();
   await waitForSocketConnection(socket);
 
-  const updatedTabs: TerminalTab[] = [];
-  for (const tab of tabs) {
-    const alive = await new Promise<boolean>((resolve) => {
-      socket.emit(
-        'terminal:check',
-        { terminalId: tab.id },
-        (result: { alive: boolean }) => resolve(result?.alive ?? false)
-      );
-      setTimeout(() => resolve(false), 2000);
-    });
+  // Check all tabs in parallel instead of sequentially (saves ~2s per extra tab)
+  const results = await Promise.all(
+    tabs.map((tab) =>
+      new Promise<{ tab: TerminalTab; alive: boolean }>((resolve) => {
+        socket.emit(
+          'terminal:check',
+          { terminalId: tab.id },
+          (result: { alive: boolean }) => resolve({ tab, alive: result?.alive ?? false })
+        );
+        setTimeout(() => resolve({ tab, alive: false }), 2000);
+      })
+    )
+  );
 
+  const updatedTabs: TerminalTab[] = [];
+  for (const { tab, alive } of results) {
     if (alive) {
       socket.emit('terminal:subscribe', { terminalId: tab.id });
       updatedTabs.push({ ...tab, isConnected: true });

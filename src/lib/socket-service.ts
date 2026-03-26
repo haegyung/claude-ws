@@ -16,6 +16,9 @@ export function getSocket(): Socket {
     socket = io({
       reconnection: true,
       reconnectionDelay: 1000,
+      // Skip HTTP long-polling — go straight to WebSocket.
+      // Polling adds latency on mobile and through reverse proxies/tunnels.
+      transports: ['websocket'],
     });
 
     // Prevent HMR from destroying socket

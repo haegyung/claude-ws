@@ -155,6 +155,10 @@ app.prepare().then(async () => {
     // Keep connections alive through Cloudflare Tunnel (100s idle timeout)
     pingInterval: 10000,
     pingTimeout: 10000,
+    // Compress WebSocket messages — terminal output is highly compressible text
+    perMessageDeflate: {
+      threshold: 256, // only compress messages larger than 256 bytes
+    },
   });
 
   // Restore autopilot state from DB (needs io for worker callbacks)
@@ -1040,8 +1044,25 @@ app.prepare().then(async () => {
   // Terminal Manager Event Handlers
   // ========================================
 
+  // Batch rapid PTY output bursts into single socket messages (~16ms window).
+  // Reduces message count significantly for high-throughput commands (ls, cat, etc.)
+  const terminalOutputBuffers = new Map<string, string>();
+  let terminalOutputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flushTerminalOutputBuffers() {
+    terminalOutputFlushTimer = null;
+    for (const [terminalId, buffered] of terminalOutputBuffers) {
+      io.to(`terminal:${terminalId}`).emit('terminal:output', { terminalId, data: buffered });
+    }
+    terminalOutputBuffers.clear();
+  }
+
   terminalManager.on('output', ({ terminalId, data }) => {
-    io.to(`terminal:${terminalId}`).emit('terminal:output', { terminalId, data });
+    const existing = terminalOutputBuffers.get(terminalId) || '';
+    terminalOutputBuffers.set(terminalId, existing + data);
+    if (!terminalOutputFlushTimer) {
+      terminalOutputFlushTimer = setTimeout(flushTerminalOutputBuffers, 16);
+    }
   });
 
   terminalManager.on('exit', ({ terminalId, exitCode, signal }) => {

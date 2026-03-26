@@ -18,6 +18,7 @@ import {
   reconnectTabsAction,
   createTerminalAction,
   closeTerminalAction,
+  createInputBuffer,
 } from './terminal-store-socket-session-actions';
 
 export interface TerminalInstanceActions {
@@ -106,10 +107,26 @@ export const useTerminalStore = create<TerminalStore>()(
 
       setActiveTab: (terminalId) => set({ activeTabId: terminalId }),
 
-      sendInput: (terminalId, data) => getSocket().emit('terminal:input', { terminalId, data }),
+      sendInput: (() => {
+        const buffer = createInputBuffer();
+        return (terminalId: string, data: string) => buffer.send(terminalId, data);
+      })(),
 
-      sendResize: (terminalId, cols, rows) =>
-        getSocket().emit('terminal:resize', { terminalId, cols, rows }),
+      sendResize: (() => {
+        let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+        let lastArgs: { terminalId: string; cols: number; rows: number } | null = null;
+        return (terminalId: string, cols: number, rows: number) => {
+          lastArgs = { terminalId, cols, rows };
+          if (resizeTimer) return;
+          resizeTimer = setTimeout(() => {
+            resizeTimer = null;
+            if (lastArgs) {
+              getSocket().emit('terminal:resize', lastArgs);
+              lastArgs = null;
+            }
+          }, 150);
+        };
+      })(),
 
       renameTerminal: (terminalId, title) => {
         const trimmed = title.trim();

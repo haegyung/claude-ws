@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { useTranslations } from 'next-intl';
 import { darkTheme, lightTheme } from '@/components/terminal/terminal-themes';
 import { setupTerminalMobileTouchHandlers } from '@/components/terminal/setup-terminal-mobile-touch-handlers';
+import { TerminalLocalEcho } from '@/components/terminal/terminal-local-echo';
 
 interface UseTerminalLifecycleOptions {
   terminalId: string;
@@ -65,7 +66,7 @@ export function useTerminalLifecycle({ terminalId, isVisible, isMobile }: UseTer
         fontFamily: '"Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
         theme: isDark ? darkTheme : lightTheme,
         allowProposedApi: true,
-        scrollback: 10000,
+        scrollback: isMobile ? 3000 : 10000,
       });
 
       const fitAddon = new FitAddon();
@@ -174,11 +175,15 @@ export function useTerminalLifecycle({ terminalId, isVisible, isMobile }: UseTer
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
 
-      // Wire socket output
+      // Local echo: predict keystrokes for instant feedback on high-latency connections
+      const localEcho = new TerminalLocalEcho(terminal);
+
+      // Wire socket output (with local echo prediction suppression)
       const socket = getSocket();
       const handleOutput = (msg: { terminalId: string; data: string }) => {
         if (msg.terminalId === terminalId) {
-          terminal.write(msg.data);
+          const remaining = localEcho.onServerOutput(msg.data);
+          if (remaining) terminal.write(remaining);
         }
       };
       const handleExit = (msg: { terminalId: string }) => {
@@ -192,6 +197,8 @@ export function useTerminalLifecycle({ terminalId, isVisible, isMobile }: UseTer
       socket?.emit('terminal:subscribe', { terminalId });
 
       const inputDisposable = terminal.onData((data: string) => {
+        // Local echo renders printable chars immediately; still send to server
+        localEcho.onInput(data);
         sendInput(terminalId, data);
       });
 
@@ -211,6 +218,7 @@ export function useTerminalLifecycle({ terminalId, isVisible, isMobile }: UseTer
       }, 100);
 
       cleanupRef.current = () => {
+        localEcho.dispose();
         mobileCleanup?.();
         resizeObserver.disconnect();
         inputDisposable.dispose();
