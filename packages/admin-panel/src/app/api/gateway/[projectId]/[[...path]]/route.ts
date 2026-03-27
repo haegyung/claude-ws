@@ -1,12 +1,15 @@
 import { eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 
+import { containerPoolManager } from '@/lib/container-pool-manager';
 import { db } from '@/lib/db';
 import { poolProjects } from '@/lib/db/schema';
 
 type Context = {
   params: Promise<{ projectId: string; path?: string[] }>;
 };
+
+type NodeRequestInit = RequestInit & { duplex?: 'half' };
 
 async function proxyToProject(request: NextRequest, context: Context) {
   const { projectId, path = [] } = await context.params;
@@ -19,8 +22,20 @@ async function proxyToProject(request: NextRequest, context: Context) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
 
-  if (project.status !== 'allocated' || !project.containerPort) {
+  if (!project.containerId || !project.containerPort) {
     return NextResponse.json({ error: 'Project is not active' }, { status: 409 });
+  }
+
+  // Auto-resume stopped projects on first incoming message/request.
+  if (project.status !== 'allocated') {
+    try {
+      await containerPoolManager.ensureProjectContainerReady(projectId);
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Project is not active' },
+        { status: 409 }
+      );
+    }
   }
 
   const upstreamPath = path.length > 0 ? `/${path.join('/')}` : '/';
@@ -32,13 +47,17 @@ async function proxyToProject(request: NextRequest, context: Context) {
   headers.delete('content-length');
 
   const shouldHaveBody = request.method !== 'GET' && request.method !== 'HEAD';
-  const upstreamResponse = await fetch(upstreamUrl, {
+  const upstreamRequest: NodeRequestInit = {
     method: request.method,
     headers,
     body: shouldHaveBody ? request.body : undefined,
-    duplex: shouldHaveBody ? 'half' : undefined,
     redirect: 'manual',
-  });
+  };
+  if (shouldHaveBody) {
+    upstreamRequest.duplex = 'half';
+  }
+
+  const upstreamResponse = await fetch(upstreamUrl, upstreamRequest);
 
   const responseHeaders = new Headers(upstreamResponse.headers);
   responseHeaders.delete('content-length');

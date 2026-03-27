@@ -1,10 +1,31 @@
+"use client";
+
 import './globals.css';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 export default function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+
+  const isActive = (path: string) => {
+    if (path === '/admin') {
+      return pathname === '/admin' || pathname === '/admin/';
+    }
+    return pathname === path;
+  };
+
+  const getButtonClass = (path: string) => {
+    const baseClass = "px-4 py-2 rounded-lg transition-all text-sm font-medium";
+    const activeClass = "backdrop-blur-sm bg-white/90 border-2 border-purple-300 shadow-md text-purple-700";
+    const inactiveClass = "backdrop-blur-sm bg-white/50 border border-white/30 hover:bg-white/70 text-gray-700";
+
+    return isActive(path) ? `${baseClass} ${activeClass}` : `${baseClass} ${inactiveClass}`;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-purple-50 to-blue-50">
       {/* Navigation */}
@@ -22,18 +43,15 @@ export default function AdminLayout({
             </div>
 
             <div className="flex items-center gap-4">
-              <button className="px-4 py-2 rounded-lg backdrop-blur-sm bg-white/50 border border-white/30 hover:bg-white/70 transition-all text-sm font-medium text-gray-700">
+              <Link href="/admin" className={getButtonClass('/admin')}>
                 Dashboard
-              </button>
-              <button className="px-4 py-2 rounded-lg backdrop-blur-sm bg-white/50 border border-white/30 hover:bg-white/70 transition-all text-sm font-medium text-gray-700">
+              </Link>
+              <Link href="/admin/projects" className={getButtonClass('/admin/projects')}>
                 Projects
-              </button>
-              <button className="px-4 py-2 rounded-lg backdrop-blur-sm bg-white/50 border border-white/30 hover:bg-white/70 transition-all text-sm font-medium text-gray-700">
+              </Link>
+              <Link href="/admin/logs" className={getButtonClass('/admin/logs')}>
                 Logs
-              </button>
-              <button className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white text-sm font-medium shadow-lg hover:shadow-xl transition-all">
-                Quick Actions
-              </button>
+              </Link>
             </div>
           </div>
         </div>

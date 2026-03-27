@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { mkdir, writeFile, access } from 'fs/promises';
-import { join } from 'path';
+import { mkdir } from 'fs/promises';
 import { createLogger } from '@/lib/logger';
 import { createProjectService } from '@agentic-sdk/services/project/project-crud';
+import { setupProjectDefaults } from '@/lib/project-utils';
 
 const log = createLogger('Projects');
 const projectService = createProjectService(db);
@@ -50,16 +50,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate CLAUDE.md if it doesn't exist
-    const claudeMdPath = join(path, 'CLAUDE.md');
-    try {
-      await access(claudeMdPath);
-    } catch {
-      const claudeMdContent = `# CLAUDE.md\n\nThis file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.\n\n<!-- TODO: Update this file once the project is scaffolded with actual build commands, architecture, and conventions. -->\n`;
-      await writeFile(claudeMdPath, claudeMdContent, 'utf-8');
-    }
-
     const newProject = await projectService.create({ name, path });
+    try {
+      await setupProjectDefaults(path, newProject.id);
+    } catch (setupError) {
+      log.warn({ error: setupError, projectId: newProject.id }, 'Project created but template setup failed');
+    }
 
     return NextResponse.json(newProject, { status: 201 });
   } catch (error: any) {

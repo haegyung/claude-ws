@@ -16,7 +16,7 @@ const log = createLogger('Cron-CheckIdleProjects');
 async function checkIdleProjects() {
   log.info('Starting idle project check...');
 
-  const idleThreshold = Date.now() - 24 * 60 * 60 * 1000; // 24 hours ago
+  const idleThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours ago
 
   try {
     // Find projects that are running but inactive
@@ -30,9 +30,10 @@ async function checkIdleProjects() {
       if (!project.containerId) continue;
 
       try {
-        const idleDuration = Math.floor((Date.now() - project.lastActivityAt) / 1000 / 60);
+        const lastActivityAt = new Date(project.lastActivityAt);
+        const idleDuration = Math.floor((Date.now() - lastActivityAt.getTime()) / 1000 / 60);
         log.info(`Stopping idle project: ${project.name} (${project.id})`);
-        log.info(`  Last activity: ${new Date(project.lastActivityAt).toISOString()}`);
+        log.info(`  Last activity: ${lastActivityAt.toISOString()}`);
         log.info(`  Idle for: ${idleDuration} minutes`);
 
         await containerPoolManager.releaseContainer(project.containerId, project.id);

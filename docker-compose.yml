@@ -2,6 +2,31 @@
 # version: '3.9'
 
 services:
+  shared-llm-proxy:
+    build:
+      context: ./services/shared-llm-proxy
+      dockerfile: Dockerfile
+    container_name: shared-llm-proxy
+    restart: unless-stopped
+    environment:
+      - SHARED_LLM_PROXY_PORT=${SHARED_LLM_PROXY_PORT:-8666}
+      - SHARED_LLM_PROXY_HOST=0.0.0.0
+      - ANTHROPIC_PROXIED_BASE_URL=${ANTHROPIC_PROXIED_BASE_URL:-https://api.anthropic.com}
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_API_RETRY_TIMES=${ANTHROPIC_API_RETRY_TIMES:-3}
+      - ANTHROPIC_API_RETRY_DELAY_MS=${ANTHROPIC_API_RETRY_DELAY_MS:-10000}
+      - SHARED_LLM_PROXY_CACHE_TTL_MS=${SHARED_LLM_PROXY_CACHE_TTL_MS:-3600000}
+      - SHARED_LLM_PROXY_CACHE_MAX_ENTRIES=${SHARED_LLM_PROXY_CACHE_MAX_ENTRIES:-5000}
+    networks:
+      - claude-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8666/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   # Main Application (Agentic SDK)
   claude-ws:
     build:
@@ -23,6 +48,9 @@ services:
 
       # Data Directory
       - DATA_DIR=/app/data
+      - POOL_DOCKER_NETWORK=${POOL_DOCKER_NETWORK:-claude-network}
+      - SHARED_LLM_PROXY_PORT=${SHARED_LLM_PROXY_PORT:-8666}
+      - SHARED_LLM_PROXY_URL=${SHARED_LLM_PROXY_URL:-http://shared-llm-proxy:8666/api/proxy/anthropic}
 
       # Skip loading .env file (using environment variables from docker-compose)
       - CLAUDE_WS_USER_CWD=/app
@@ -40,6 +68,9 @@ services:
 
     networks:
       - claude-network
+    depends_on:
+      shared-llm-proxy:
+        condition: service_healthy
 
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8053/"]

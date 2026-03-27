@@ -87,7 +87,10 @@ export async function DELETE(request: NextRequest, context: Context) {
 
     // Release container back to pool
     if (project.containerId) {
-      await containerPoolManager.releaseContainer(project.containerId, id);
+      await containerPoolManager.releaseContainer(project.containerId, id, {
+        returnToPool: true,
+        clearData: false,
+      });
     }
 
     // Delete project record
@@ -135,7 +138,7 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const { id } = await context.params;
     const body = await request.json();
-    const { reason = 'Manual stop by admin', return_to_pool = true } = body;
+    const { reason = 'Manual stop by admin', return_to_pool = false } = body;
 
     const project = await db.query.poolProjects.findFirst({
       where: eq(poolProjects.id, id),
@@ -149,8 +152,11 @@ export async function POST(request: NextRequest, context: Context) {
       return NextResponse.json({ error: 'No container allocated to this project' }, { status: 400 });
     }
 
-    // Release container back to pool
-    await containerPoolManager.releaseContainer(project.containerId, id);
+    // Stop container, and optionally return to pool
+    await containerPoolManager.releaseContainer(project.containerId, id, {
+      returnToPool: return_to_pool,
+      clearData: false,
+    });
 
     // Log activity
     await db.insert(poolProjectActivityLog).values({

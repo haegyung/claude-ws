@@ -18,6 +18,12 @@ export interface PoolConfig {
     basePort: number;
     image: string;
   };
+  networking: {
+    dockerNetwork: string;
+  };
+  sharedProxy: {
+    url: string;
+  };
   storage: {
     basePath: string;
     poolTempBase: string;
@@ -35,6 +41,11 @@ export interface AllocationResult {
   access_url: string;
   data_path: string;
 }
+
+type ReleaseOptions = {
+  returnToPool?: boolean;
+  clearData?: boolean;
+};
 
 export class ContainerPoolManager {
   private docker: Docker;
@@ -176,10 +187,11 @@ export class ContainerPoolManager {
   }
 
   /**
-   * Release container back to pool
+   * Stop project container. Optionally return it to idle pool.
    */
-  async releaseContainer(containerId: string, projectId: string): Promise<void> {
-    log.info(`Releasing container ${containerId} back to pool`);
+  async releaseContainer(containerId: string, projectId: string, options: ReleaseOptions = {}): Promise<void> {
+    const { returnToPool = false, clearData = false } = options;
+    log.info(`Stopping container ${containerId} (returnToPool=${returnToPool}, clearData=${clearData})`);
     const containerPort = await this.getPortFromId(containerId);
 
     // 1. Stop container
@@ -212,12 +224,12 @@ export class ContainerPoolManager {
       throw new Error(`RELEASE_FAILED: Could not stop container ${containerId}`);
     }
 
-    const dataPath = this.getContainerMountPath(containerId);
-    await this.clearDirectory(dataPath);
-    await this.prepareDataPath(dataPath);
-    await this.initializeContainerProjectInDb(dataPath);
-
-    log.info(`Returned container ${containerId} to sleeping pool mode`);
+    if (returnToPool && clearData) {
+      const dataPath = this.getContainerMountPath(containerId);
+      await this.clearDirectory(dataPath);
+      await this.prepareDataPath(dataPath);
+      await this.initializeContainerProjectInDb(dataPath);
+    }
 
     // 3. Update database
     db.transaction((tx) => {
@@ -234,10 +246,12 @@ export class ContainerPoolManager {
       tx
         .update(containerPool)
         .set({
-          status: 'idle',
-          projectId: null,
-          allocatedAt: null,
+          status: returnToPool ? 'idle' : 'stopped',
+          projectId: returnToPool ? null : projectId,
+          allocatedAt: returnToPool ? null : new Date(),
           updatedAt: new Date(),
+          healthStatus: 'healthy',
+          errorMessage: null,
         })
         .where(eq(containerPool.containerId, containerId))
         .run();
@@ -248,12 +262,126 @@ export class ContainerPoolManager {
         projectId,
         containerId,
         action: 'stopped',
-        details: JSON.stringify({ returnedToPool: true, containerPort }),
+        details: JSON.stringify({ returnedToPool: returnToPool, containerPort, clearData }),
         timestamp: new Date(),
         performedBy: 'system',
         performedAt: new Date(),
       }).run();
     });
+  }
+
+  /**
+   * Ensure an existing project's container is running before routing traffic.
+   */
+  async ensureProjectContainerReady(projectId: string): Promise<void> {
+    const project = await db.query.poolProjects.findFirst({
+      where: eq(poolProjects.id, projectId),
+    });
+
+    if (!project?.containerId) {
+      throw new Error(`PROJECT_NOT_ALLOCATED: ${projectId}`);
+    }
+    const containerId = project.containerId;
+
+    const poolItem = await db.query.containerPool.findFirst({
+      where: eq(containerPool.containerId, containerId),
+    });
+
+    if (!poolItem) {
+      throw new Error(`POOL_CONTAINER_NOT_FOUND: ${containerId}`);
+    }
+
+    const dockerContainer = this.docker.getContainer(containerId);
+    const inspectResult = await dockerContainer.inspect();
+
+    if (!inspectResult.State.Running) {
+      await this.ensureContainerNetworkAttached(containerId);
+      await dockerContainer.start();
+      log.info(`Restarted stopped container ${containerId} for project ${projectId}`);
+    }
+
+    const now = new Date();
+    db.transaction((tx) => {
+      tx
+        .update(poolProjects)
+        .set({
+          status: 'allocated',
+          stoppedAt: null,
+          lastActivityAt: now,
+        })
+        .where(eq(poolProjects.id, projectId))
+        .run();
+
+      tx
+        .update(containerPool)
+        .set({
+          status: 'allocated',
+          projectId,
+          allocatedAt: poolItem.allocatedAt ?? now,
+          updatedAt: now,
+          healthStatus: 'healthy',
+          errorMessage: null,
+        })
+        .where(eq(containerPool.containerId, containerId))
+        .run();
+
+      tx.insert(poolProjectActivityLog).values({
+        id: nanoid(),
+        projectId,
+        containerId,
+        action: 'restarted',
+        details: JSON.stringify({ containerPort: project.containerPort }),
+        timestamp: now,
+        performedBy: 'system',
+        performedAt: now,
+      }).run();
+    });
+  }
+
+  /**
+   * Get logs from a container
+   */
+  async getContainerLogs(containerId: string, options: {
+    tail?: number;
+    timestamps?: boolean;
+    stdout?: boolean;
+    stderr?: boolean;
+  } = {}): Promise<string> {
+    const {
+      tail = 100,
+      timestamps = true,
+      stdout = true,
+      stderr = true,
+    } = options;
+
+    log.info(`Fetching logs for container: ${containerId}`);
+
+    try {
+      const container = this.docker.getContainer(containerId);
+
+      const logs = await container.logs({
+        stdout,
+        stderr,
+        tail,
+        timestamps,
+        follow: false,
+      });
+
+      // Docker logs are Buffer with newlines, need to decode and clean up
+      const logString = logs.toString('utf-8');
+
+      // Remove Docker log headers (8 bytes header per line)
+      const cleanedLogs = logString
+        .split('\n')
+        .map(line => line.slice(8)) // Remove header
+        .filter(line => line.trim())
+        .join('\n');
+
+      return cleanedLogs;
+    } catch (error) {
+      log.error(`Failed to get logs for container ${containerId}:`, error);
+      throw new Error(`LOGS_FAILED: ${error}`);
+    }
   }
 
   /**
@@ -351,6 +479,7 @@ export class ContainerPoolManager {
             PortBindings: { '8053/tcp': [{ HostPort: String(port) }] },
             Binds: [`${dataPath}:/app/data`],
             RestartPolicy: { Name: 'unless-stopped' },
+            NetworkMode: this.config.networking.dockerNetwork,
           },
           Env: this.buildContainerEnv(),
           Labels: {
@@ -497,12 +626,22 @@ export class ContainerPoolManager {
       'data/pool-temp',
       'POOL_TEMP_BASE'
     );
+    const sharedProxyPort = parseInt(process.env.SHARED_LLM_PROXY_PORT || '8666', 10);
+    const sharedProxyUrl =
+      process.env.SHARED_LLM_PROXY_URL ||
+      `http://shared-llm-proxy:${sharedProxyPort}/api/proxy/anthropic`;
 
     return {
       pool: {
         size: parseInt(process.env.POOL_SIZE || '5'),
         basePort: parseInt(process.env.POOL_BASE_PORT || '30000'),
         image: process.env.POOL_IMAGE || 'claude-ws:latest',
+      },
+      networking: {
+        dockerNetwork: process.env.POOL_DOCKER_NETWORK || 'claude-network',
+      },
+      sharedProxy: {
+        url: sharedProxyUrl,
       },
       storage: {
         basePath,
@@ -583,12 +722,18 @@ export class ContainerPoolManager {
     const container = this.docker.getContainer(containerId);
     const inspectResult = await container.inspect();
     const networks = inspectResult.NetworkSettings?.Networks ?? {};
-    if (Object.keys(networks).length > 0) {
+    const targetNetwork = this.config.networking.dockerNetwork;
+    if (networks[targetNetwork]) {
       return;
     }
 
-    log.warn(`Container ${containerId} has no attached Docker network; connecting to "bridge".`);
-    await this.docker.getNetwork('bridge').connect({ Container: containerId });
+    if (Object.keys(networks).length === 0) {
+      log.warn(`Container ${containerId} has no attached Docker network; connecting to "${targetNetwork}".`);
+    } else {
+      log.warn(`Container ${containerId} is not attached to "${targetNetwork}", attaching now.`);
+    }
+
+    await this.docker.getNetwork(targetNetwork).connect({ Container: containerId });
   }
 
   private isPortAlreadyAllocatedError(error: unknown): boolean {
@@ -672,15 +817,13 @@ export class ContainerPoolManager {
       'PORT=8053',
       'DATA_DIR=/app/data',
       'POOL_MODE=true',
+      `ANTHROPIC_BASE_URL=${this.config.sharedProxy.url}`,
       // Pool containers should run with SDK provider and ANTHROPIC_* env vars.
       'CLAUDE_PROVIDER=sdk',
     ];
 
     const passthroughKeys = [
       'API_ACCESS_KEY',
-      'ANTHROPIC_BASE_URL',
-      'ANTHROPIC_API_KEY',
-      'ANTHROPIC_AUTH_TOKEN',
       'ANTHROPIC_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_SONNET_MODEL',

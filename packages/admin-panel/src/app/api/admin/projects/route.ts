@@ -151,11 +151,13 @@ async function getPoolStatus() {
   const idle = containers.filter(c => c.status === 'idle').length;
   const allocated = containers.filter(c => c.status === 'allocated').length;
   const stopping = containers.filter(c => c.status === 'stopping').length;
+  const stopped = containers.filter(c => c.status === 'stopped').length;
 
   return {
-    total: idle + allocated + stopping,
+    total: idle + allocated + stopping + stopped,
     idle,
     allocated,
     stopping,
+    stopped,
   };
 }

@@ -16,7 +16,7 @@ tests/
 tmp/
 # testing
 /coverage
-
+.agents/
 # local data (database, projects)
 /data
 
@@ -51,6 +51,7 @@ CLAUDE.md
 # claudekit
 .opencode
 AGENTS.md
+.gitnexus/
 
 # vercel
 .vercel

@@ -59,8 +59,15 @@ The application uses a `.env` file for configuration:
    # Required: API Authentication
    API_ACCESS_KEY=your-secure-api-key-here
 
-   # Optional: Anthropic API
+   # Optional: Anthropic API credentials (used by shared-llm-proxy)
+   # ANTHROPIC_AUTH_TOKEN=
    # ANTHROPIC_API_KEY=sk-ant-api03-...
+   # ANTHROPIC_PROXIED_BASE_URL=https://api.anthropic.com
+
+   # Shared proxy for pooled project containers
+   SHARED_LLM_PROXY_PORT=8666
+   SHARED_LLM_PROXY_URL=http://shared-llm-proxy:8666/api/proxy/anthropic
+   POOL_DOCKER_NETWORK=claude-network
 
    # Server Configuration
    PORT=8053
@@ -151,15 +158,18 @@ docker run --rm -v claude-data:/data -v $(pwd):/backup \
 
 ## Health Checks
 
-The container includes a health check:
+The containers include health checks:
 
 ```bash
 # Check health status
 docker-compose ps
 docker inspect claude-workspace | jq '.[0].State.Health'
+docker inspect shared-llm-proxy | jq '.[0].State.Health'
 
 # Manual health check
 curl http://localhost:8053/api/health
+# Internal shared proxy health (from container network)
+docker-compose exec claude-workspace wget -qO- http://shared-llm-proxy:8666/health
 ```
 
 ## Troubleshooting
