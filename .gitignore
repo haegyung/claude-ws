@@ -19,7 +19,8 @@ tmp/
 .agents/
 # local data (database, projects)
 /data
-
+.gitnexusignore
+.gitnexus/
 # next.js
 /.next/
 /out/

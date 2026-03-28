@@ -8,8 +8,14 @@
  * 3. Remove legacy hook env files (`hook.env`, `.env`, `hook.env.example`, `.env.example`)
  *
  * Usage:
+ *   cd /home/roxane/Privos/claudews
+ *   pnpm install
  *   pnpm migrate-all-projects           # Dry run
  *   pnpm migrate-all-projects --force   # Execute migration
+ *
+ * Recommended flow:
+ * 1. Run dry run and review the report
+ * 2. Re-run with --force to apply changes
  */
 
 import path from 'path';
@@ -111,6 +117,7 @@ async function getProjectDiffs(projectPath: string, projectId: string, workspace
   const pullTemplate = await fileContent(path.join(templateHooksDir, 'minio-pull-sync.ts'));
   const pushTemplate = await fileContent(path.join(templateHooksDir, 'minio-push-sync.ts'));
   const settingsTemplate = await fileContent(path.join(templateDir, 'settings.json'));
+  const claudeMdTemplate = await fileContent(path.join(templateDir, 'CLAUDE.template.md'));
 
   const expectedPull = expectedPullContent(pullTemplate, projectId);
   const expectedPush = expectedPushContent(pushTemplate, projectId);
@@ -118,6 +125,7 @@ async function getProjectDiffs(projectPath: string, projectId: string, workspace
   const pullPath = path.join(hooksDir, 'minio-pull-sync.ts');
   const pushPath = path.join(hooksDir, 'minio-push-sync.ts');
   const settingsPath = path.join(claudeDir, 'settings.json');
+  const claudeMdPath = path.join(claudeDir, 'CLAUDE.md');
 
   if (!fsSync.existsSync(pullPath) || fsSync.readFileSync(pullPath, 'utf-8') !== expectedPull) {
     diffs.push('sync:minio-pull-sync.ts');
@@ -127,6 +135,9 @@ async function getProjectDiffs(projectPath: string, projectId: string, workspace
   }
   if (!fsSync.existsSync(settingsPath) || fsSync.readFileSync(settingsPath, 'utf-8') !== settingsTemplate) {
     diffs.push('sync:.claude/settings.json');
+  }
+  if (!fsSync.existsSync(claudeMdPath) || fsSync.readFileSync(claudeMdPath, 'utf-8') !== claudeMdTemplate) {
+    diffs.push('sync:.claude/CLAUDE.md');
   }
   for (const legacyName of ['hook.env', '.env', 'hook.env.example', '.env.example']) {
     if (fsSync.existsSync(path.join(hooksDir, legacyName))) {
@@ -182,6 +193,14 @@ async function migrateProject(target: ProjectTarget, execute: boolean, workspace
 
     await setupProjectDefaults(target.path, target.id, workspaceRoot, { useHookTemplate: true });
     result.actions.push('Synced hook templates + settings');
+
+    const claudeMdPath = path.join(target.path, '.claude', 'CLAUDE.md');
+    const claudeMdTemplatePath = path.join(workspaceRoot, 'src', 'hooks', 'template', 'CLAUDE.template.md');
+    const claudeMdTemplate = await fileContent(claudeMdTemplatePath);
+    if (!fsSync.existsSync(claudeMdPath) || fsSync.readFileSync(claudeMdPath, 'utf-8') !== claudeMdTemplate) {
+      await fs.writeFile(claudeMdPath, claudeMdTemplate, 'utf-8');
+      result.actions.push('Synced .claude/CLAUDE.md');
+    }
 
     const removed = await removeLegacyHookFiles(target.path);
     for (const fileName of removed) {
