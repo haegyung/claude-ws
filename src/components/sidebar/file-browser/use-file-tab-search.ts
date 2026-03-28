@@ -23,18 +23,11 @@ export function useFileTabSearch({ editedContent }: UseFileTabSearchOptions) {
   const [totalMatches, setTotalMatches] = useState(0);
   const [matchPositions, setMatchPositions] = useState<MatchPosition[]>([]);
 
-  const handleSearch = useCallback((query: string) => {
-    setSearchQuery(query);
-    if (!query) {
-      setTotalMatches(0);
-      setCurrentMatch(0);
-      setMatchPositions([]);
-      setEditorPosition(null);
-      return;
-    }
-
+  // Shared logic to find all match positions for a query in content
+  const findMatches = useCallback((query: string, content: string): MatchPosition[] => {
+    if (!query) return [];
     const positions: MatchPosition[] = [];
-    const lines = editedContent.split('\n');
+    const lines = content.split('\n');
     const lowerQuery = query.toLowerCase();
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
@@ -47,6 +40,20 @@ export function useFileTabSearch({ editedContent }: UseFileTabSearchOptions) {
         col = index + 1;
       }
     }
+    return positions;
+  }, []);
+
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query);
+    if (!query) {
+      setTotalMatches(0);
+      setCurrentMatch(0);
+      setMatchPositions([]);
+      setEditorPosition(null);
+      return;
+    }
+
+    const positions = findMatches(query, editedContent);
 
     setMatchPositions(positions);
     setTotalMatches(positions.length);
@@ -55,7 +62,23 @@ export function useFileTabSearch({ editedContent }: UseFileTabSearchOptions) {
     if (positions.length > 0) {
       setEditorPosition(positions[0]);
     }
-  }, [editedContent, setEditorPosition]);
+  }, [editedContent, setEditorPosition, findMatches]);
+
+  // Recompute match positions when editedContent changes during an active search
+  useEffect(() => {
+    if (!searchQuery) return;
+
+    const positions = findMatches(searchQuery, editedContent);
+    setMatchPositions(positions);
+    setTotalMatches(positions.length);
+
+    // Clamp currentMatch to valid range
+    setCurrentMatch((prev) => {
+      if (positions.length === 0) return 0;
+      const clamped = Math.min(prev, positions.length);
+      return clamped < 1 ? 1 : clamped;
+    });
+  }, [editedContent, searchQuery, findMatches]);
 
   const handleNextMatch = useCallback(() => {
     if (!searchQuery || totalMatches === 0) return;
