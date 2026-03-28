@@ -1,24 +1,31 @@
-FROM node:20-alpine
+FROM node:20-alpine AS base
 RUN apk add --no-cache python3 make g++ gcc musl-dev libstdc++ && \
     corepack enable && corepack prepare pnpm@10.28.0 --activate
-
 WORKDIR /app
 
-# Copy everything including pre-built .next from host
-COPY . .
+FROM base AS deps
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-# Install production deps and rebuild native modules for linux/musl
-# Use SDK provider (no subprocess spawning) - CLI provider requires cli.js binary
+FROM base AS builder
 ENV CLAUDE_PROVIDER=sdk
 ENV CI=true
-RUN rm -rf node_modules && \
-    pnpm install --frozen-lockfile --prod=false
+ENV NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm build
 
-# Remove build tools to reduce image size
-RUN apk del python3 make g++ gcc musl-dev
-
-RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 appuser
-RUN mkdir -p /app/data && chown -R appuser:nodejs /app
+FROM node:20-alpine AS runner
+RUN apk add --no-cache libstdc++ && \
+    corepack enable && corepack prepare pnpm@10.28.0 --activate
+WORKDIR /app
+ENV NODE_ENV=production
+ENV CLAUDE_PROVIDER=sdk
+ENV PORT=8556
+ENV CI=true
+COPY --from=builder /app ./
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 appuser && \
+    mkdir -p /app/data && chown -R appuser:nodejs /app
 USER appuser
-EXPOSE 3000
+EXPOSE 8556
 CMD ["pnpm", "start"]

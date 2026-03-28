@@ -1,14 +1,14 @@
 services:
   claude-ws:
     build: .
-    ports:
-      - "3000:8556"
     env_file:
       - .env
     environment:
       - NODE_ENV=production
       - CLAUDE_PROVIDER=sdk
       - PORT=8556
+    expose:
+      - "8556"
     volumes:
       - claude-ws-data:/app/data
 

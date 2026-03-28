@@ -1,22 +1,22 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import * as schema from './schema';
-import path from 'path';
-import fs from 'fs';
-import { config } from 'dotenv';
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema";
+import path from "path";
+import fs from "fs";
+import { config } from "dotenv";
 import {
   runAttemptsMigrations,
   runTasksMigrations,
   runCheckpointsMigrations,
-} from './db-migration-alter-table-helpers';
+} from "./db-migration-alter-table-helpers";
 
 // Load .env from user's CWD (not packageRoot) for direct script usage
 const userCwd = process.env.CLAUDE_WS_USER_CWD || process.cwd();
-config({ path: path.join(userCwd, '.env') });
+config({ path: path.join(userCwd, ".env") });
 
 // Database file path - use DATA_DIR from env if configured, otherwise user's CWD
-const DB_DIR = process.env.DATA_DIR || path.join(userCwd, 'data');
-const DB_PATH = path.join(DB_DIR, 'claude-ws.db');
+const DB_DIR = process.env.DATA_DIR || path.join(userCwd, "data");
+const DB_PATH = path.join(DB_DIR, "claude-ws.db");
 
 // Ensure data directory exists
 const dataDir = path.dirname(DB_PATH);
@@ -25,19 +25,20 @@ if (!fs.existsSync(dataDir)) {
 }
 
 // Ensure data/tmp directory exists for formatted output files
-const tmpDir = path.join(dataDir, 'tmp');
+const tmpDir = path.join(dataDir, "tmp");
 if (!fs.existsSync(tmpDir)) {
   fs.mkdirSync(tmpDir, { recursive: true });
 }
 
 // Create SQLite connection
-const sqlite = new Database(DB_PATH);
+const sqlite = new Database(DB_PATH, { timeout: 5000 });
 
 // Enable WAL mode for better concurrency
-sqlite.pragma('journal_mode = WAL');
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("busy_timeout = 5000");
 
 // Enable foreign key constraints (required for CASCADE deletes to work)
-sqlite.pragma('foreign_keys = ON');
+sqlite.pragma("foreign_keys = ON");
 
 // Create Drizzle ORM instance
 export const db = drizzle(sqlite, { schema });
@@ -261,7 +262,7 @@ export function initDb() {
   `);
 
   // Migration: Add prompt and result columns to subagents
-  for (const col of ['prompt', 'result_preview', 'result_full']) {
+  for (const col of ["prompt", "result_preview", "result_full"]) {
     try {
       sqlite.exec(`ALTER TABLE subagents ADD COLUMN ${col} TEXT`);
     } catch {
@@ -282,6 +283,26 @@ export function initDb() {
 }
 
 // Initialize on first import
-initDb();
+function sleepSync(ms: number) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function initDbWithRetry(maxAttempts = 5, delayMs = 250) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      initDb();
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isLocked = message.includes("database is locked");
+      if (!isLocked || attempt === maxAttempts) {
+        throw error;
+      }
+      sleepSync(delayMs * attempt);
+    }
+  }
+}
+
+initDbWithRetry();
 
 export { schema };
